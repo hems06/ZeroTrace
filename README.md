@@ -2,7 +2,7 @@
 
 **OPCODE IMPACT 2026 | Hackathon Submission**
 
-**Team ID:** [Enter Team ID]
+**Team ID:** OPCO004
 
 ## 1. Problem Statement
 When organizations decommission or recycle IT assets (HDDs, SSDs, USBs), they must ensure that sensitive data is permanently destroyed to prevent data breaches. Existing solutions often lack transparent, cryptographically verifiable audit trails, are difficult to use, or fail to safely handle modern storage constraints like OS-level auto-mounting.
