@@ -1,0 +1,22 @@
+backend/.venv/
+backend/instance/
+backend/instance_test/
+backend/__pycache__/
+backend/.pytest_cache/
+**/__pycache__/
+*.pyc
+
+node_modules/
+frontend/dist/
+frontend/.vite/
+backend/frontend_dist/
+
+.env
+*.log
+
+# PyInstaller packaging output
+backend/build/
+backend/dist/
+backend/*.spec
+*.spec.bak
+

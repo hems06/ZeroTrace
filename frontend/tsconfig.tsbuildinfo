@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/components/operatorbar.tsx","./src/components/statcard.tsx","./src/components/statusbadge.tsx","./src/pages/auditlog.tsx","./src/pages/certificates.tsx","./src/pages/dashboard.tsx","./src/pages/sanitize.tsx","./src/types/api.ts"],"version":"5.9.3"}
