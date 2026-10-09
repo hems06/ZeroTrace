@@ -111,7 +111,7 @@ export default function Sanitize() {
           </button>
         </div>
         <div className="mb-4 flex gap-2">
-          {(["demo", "physical", "image"] as TargetType[]).map((t) => (
+          {(["demo", "image", "physical"] as TargetType[]).map((t) => (
             <button
               key={t}
               onClick={() => {
