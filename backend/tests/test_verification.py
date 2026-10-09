@@ -82,3 +82,31 @@ def test_verify_flags_original_tampering_as_failed(tmp_path, sample_image):
     assert result.status == "failed"
     assert result.original_untouched is False
     working_copy.unlink()
+
+
+def test_device_verify_samples_whole_span_and_catches_tail_data(tmp_path):
+    from app.sanitization.physical import verify_device_zeroed
+
+    size = 64 * 1024 * 1024
+    dev = tmp_path / "fake_device.bin"
+    dev.write_bytes(bytes(size))
+
+    clean = verify_device_zeroed(str(dev), size)
+    assert clean["status"] == "verified"
+    assert clean["samples_checked"] >= 16
+    assert clean["non_zero_bytes_found"] == 0
+
+    with open(dev, "r+b") as f:  # leftover data in the last MiB
+        f.seek(size - 512)
+        f.write(b"SECRET")
+    dirty = verify_device_zeroed(str(dev), size)
+    assert dirty["non_zero_bytes_found"] == 6
+
+
+def test_device_verify_without_capacity_is_inconclusive(tmp_path):
+    from app.sanitization.physical import verify_device_zeroed
+
+    dev = tmp_path / "d.bin"
+    dev.write_bytes(bytes(8192))
+    r = verify_device_zeroed(str(dev), None)
+    assert r["status"] == "inconclusive" and "capacity" in r["verification_error"]

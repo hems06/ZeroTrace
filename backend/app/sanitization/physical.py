@@ -207,56 +207,56 @@ def overwrite_device_passes(
     return records
 
 
-def verify_device_zeroed(device_id: str, sample_size: int = 4 * 1024 * 1024) -> dict:
-    """Read back a sample from the device and check if it's zeroed/overwritten.
+_SECTOR = 4096  # read offsets/lengths are multiples of this (raw devices require alignment)
+_VERIFY_SAMPLES = 16
 
-    For production verification we sample the first and last `sample_size`
-    bytes plus a mid-point sample, and report whether original data patterns
-    are absent (all bytes match the final pass pattern).
+
+def _sample_offsets(capacity: int, sample_size: int, count: int) -> list[int]:
+    """Evenly spaced, sector-aligned offsets covering head, body and tail."""
+    last = max(0, capacity - sample_size)
+    if count <= 1 or last == 0:
+        return [0]
+    offsets = {(last * i // (count - 1)) // _SECTOR * _SECTOR for i in range(count)}
+    return sorted(offsets)
+
+
+def verify_device_zeroed(
+    device_id: str,
+    capacity_bytes: int | None = None,
+    sample_size: int = 1024 * 1024,
+) -> dict:
+    """Read back samples across the device and count non-zero bytes.
+
+    Samples `_VERIFY_SAMPLES` evenly spaced windows (head and tail included)
+    using the capacity reported by discovery -- seeking to the end of a raw
+    Windows disk does not report its size. This is sampling, not a full read:
+    it gives evidence, not proof, that every sector was overwritten.
     """
-    result = {
+    result: dict = {
         "samples_checked": 0,
+        "bytes_checked": 0,
         "non_zero_bytes_found": 0,
         "status": "inconclusive",
     }
+    if not capacity_bytes:
+        result["verification_error"] = "Device capacity unknown; cannot place verification samples."
+        return result
 
+    sample_size = max(_SECTOR, min(sample_size, capacity_bytes) // _SECTOR * _SECTOR)
     try:
-        with open(device_id, "rb") as f:
-            # Read first sample
-            head = f.read(sample_size)
-            if not head:
-                result["status"] = "failed"
-                return result
-
-            result["samples_checked"] += 1
-            non_zero = sum(1 for b in head if b != 0)
-            result["non_zero_bytes_found"] += non_zero
-
-            # Seek to middle
-            try:
-                f.seek(0, 2)  # end
-                total = f.tell()
-                if total > sample_size * 3:
-                    f.seek(total // 2)
-                    mid = f.read(sample_size)
-                    result["samples_checked"] += 1
-                    result["non_zero_bytes_found"] += sum(1 for b in mid if b != 0)
-
-                # Read last sample
-                if total > sample_size * 2:
-                    f.seek(max(0, total - sample_size))
-                    tail = f.read(sample_size)
-                    result["samples_checked"] += 1
-                    result["non_zero_bytes_found"] += sum(1 for b in tail if b != 0)
-            except OSError:
-                pass  # Some devices don't support seeking to end
-
-    except (PermissionError, OSError) as exc:
+        with open(device_id, "rb", buffering=0) as f:
+            for offset in _sample_offsets(capacity_bytes, sample_size, _VERIFY_SAMPLES):
+                f.seek(offset)
+                buf = f.read(sample_size)
+                if not buf:
+                    result["verification_error"] = f"Read returned no data at offset {offset}."
+                    return result
+                result["samples_checked"] += 1
+                result["bytes_checked"] += len(buf)
+                result["non_zero_bytes_found"] += len(buf) - buf.count(0)
+    except OSError as exc:
         result["verification_error"] = str(exc)
         return result
 
-    # If the final pass was random, non-zero is expected. We just verify
-    # that at least some writes happened (non-zero count should be > 0
-    # for random, and == 0 for zero passes).
-    result["status"] = "verified" if result["samples_checked"] > 0 else "inconclusive"
+    result["status"] = "verified"
     return result

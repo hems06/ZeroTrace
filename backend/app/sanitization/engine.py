@@ -232,7 +232,7 @@ def _run_physical(db: Session, operation: Operation) -> None:
     )
 
     # --- Verify by sampling ---
-    verify_result = verify_device_zeroed(device_id)
+    verify_result = verify_device_zeroed(device_id, device.capacity_bytes)
 
     # Determine verification status
     if verify_result.get("verification_error"):
