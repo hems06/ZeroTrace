@@ -116,6 +116,19 @@ export default function Sanitize() {
     }
   };
 
+  useEffect(() => {
+    if (!result || (result.status !== "pending" && result.status !== "running")) return;
+    const interval = setInterval(async () => {
+      try {
+        const op = await api.getOperation(result.id);
+        setResult(op);
+      } catch (e) {
+        console.error("Polling error:", e);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [result]);
+
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
