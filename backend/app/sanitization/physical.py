@@ -8,6 +8,7 @@ Requires elevated privileges (Administrator on Windows, root on Linux).
 """
 from __future__ import annotations
 
+import errno
 import os
 import platform
 import subprocess
@@ -217,11 +218,19 @@ def overwrite_device_passes(
     device_id: str,
     capacity_bytes: int | None,
     passes: list[str],
+    _open=open,
 ) -> list[dict]:
     """Apply overwrite passes directly to a raw block device.
 
-    Opens the device in raw binary mode and writes the same pass patterns
-    (zero / one / random) used for image-based sanitization.
+    Writes the same pass patterns (zero / one / random) used for image-based
+    sanitization. The device is opened unbuffered, so every write reaches the
+    device -- and any error surfaces -- at the offset where it happened.
+
+    A pass only counts if it wrote exactly ``capacity_bytes``. A write error,
+    a write that accepts no data, or an error closing the handle raises
+    PhysicalWipeError and fails the whole operation: a partial overwrite is
+    never recorded as a completed pass. With an unknown capacity (None) a pass
+    writes until the device reports its end (ENOSPC / EINVAL).
 
     Returns a list of {pass, bytes_written} records.
     """
@@ -237,52 +246,59 @@ def overwrite_device_passes(
         else:
             raise PhysicalWipeError(f"Unknown overwrite pass kind: {kind}")
 
-        written = 0
+        # On Windows, opening \\.\PHYSICALDRIVEn for writing requires
+        # Administrator privileges; on Linux, /dev/sdX requires root.
         try:
-            # On Windows, opening \\.\PHYSICALDRIVEn in 'rb+' mode requires
-            # Administrator privileges and exclusive access (device must be
-            # offline / unmounted).
-            # On Linux, opening /dev/sdX in 'rb+' mode requires root.
-            with open(device_id, "rb+") as f:
-                target_bytes = capacity_bytes or float("inf")
-                while written < target_bytes:
-                    n = min(_CHUNK, target_bytes - written) if capacity_bytes else _CHUNK
+            f = _open(device_id, "rb+", buffering=0)
+        except PermissionError as exc:
+            raise PhysicalWipeError(
+                f"Permission denied opening {device_id}. "
+                "Run ZeroTrace as Administrator (Windows) or root (Linux)."
+            ) from exc
+        except FileNotFoundError as exc:
+            raise PhysicalWipeError(f"Device {device_id} not found. It may have been disconnected.") from exc
+        except OSError as exc:
+            raise PhysicalWipeError(f"Failed to open device {device_id}: {exc}") from exc
+
+        written = 0
+        chunk = _CHUNK
+        try:
+            with f:
+                while capacity_bytes is None or written < capacity_bytes:
+                    n = chunk if capacity_bytes is None else min(chunk, capacity_bytes - written)
                     buf = os.urandom(n) if fill is None else fill * n
                     try:
                         bytes_out = f.write(buf)
-                        if bytes_out == 0:
+                    except OSError as exc:
+                        if capacity_bytes is None and exc.errno in (errno.ENOSPC, errno.EINVAL):
+                            # Size unknown and this write ran past the end. Raw disks
+                            # reject the whole write, so retry the tail in sector-sized
+                            # writes to reach the true end before stopping.
+                            if chunk > 512:
+                                chunk = _SECTOR if chunk > _SECTOR else 512
+                                continue
+                            break  # the device has ended
+                        raise PhysicalWipeError(
+                            f"Write failed during {kind} pass at offset {written}: {exc}"
+                        ) from exc
+                    if not bytes_out:
+                        if capacity_bytes is None:
                             break
-                        written += bytes_out
-                    except OSError as e:
-                        # On Windows, writing exactly to the end of a physical drive
-                        # can sometimes yield Invalid Argument (22) or No Space Left (28).
-                        # If we've written at least 99% of the capacity, we can consider
-                        # it the end of the drive. Otherwise, it's a real failure.
-                        import errno
-                        if capacity_bytes and written >= capacity_bytes * 0.99:
-                            break
-                        if getattr(e, "errno", None) in (errno.ENOSPC, errno.EINVAL) and not capacity_bytes:
-                            break
-                        raise PhysicalWipeError(f"Write failed at offset {written}: {e}")
-                
-                f.flush()
+                        raise PhysicalWipeError(
+                            f"Device accepted no data during {kind} pass at offset {written}."
+                        )
+                    written += bytes_out
                 try:
                     os.fsync(f.fileno())
                 except OSError:
                     pass  # Some raw devices don't support fsync
-        except PermissionError:
+        except OSError as exc:  # e.g. closing the handle failed after the writes
             raise PhysicalWipeError(
-                f"Permission denied opening {device_id}. "
-                "Run ZeroTrace as Administrator (Windows) or root (Linux)."
-            )
-        except FileNotFoundError:
-            raise PhysicalWipeError(f"Device {device_id} not found. It may have been disconnected.")
-        except OSError as exc:
-            if written == 0:
-                raise PhysicalWipeError(f"Failed to open device {device_id}: {exc}")
-            # If we wrote some bytes before hitting an error, record what we got
-            pass
+                f"I/O error during {kind} pass after {written} bytes: {exc}"
+            ) from exc
 
+        if capacity_bytes is not None and written != capacity_bytes:
+            raise PhysicalWipeError(f"{kind} pass wrote {written} of {capacity_bytes} bytes.")
         records.append({"pass": kind, "bytes_written": written})
 
     return records
