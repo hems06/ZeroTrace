@@ -79,9 +79,9 @@ The dashboard displaying a completed physical device sanitization. It shows the 
 ## 9. Team Contributions
 | Member Name | Contribution |
 |-------------|--------------|
-| Hema C | Architecture design, frontend development, and core backend sanitization logic. |
-| AI Agent | Assisted in debugging raw Windows disk I/O, implementing auto-unmount logic, and packaging. |
-
+| Hemachandran A | Architecture design, frontend development, and core backend sanitization logic. |
+| Balamuthukkumar | Assisted in debugging raw Windows disk I/O, implementing auto-unmount logic, and packaging. |
+| Kiruthika T | Assisted in Research. |
 ## 10. Tools Used
 | Tool / Platform | Purpose / Why Used |
 |-----------------|--------------------|
