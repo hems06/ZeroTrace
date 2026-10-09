@@ -9,6 +9,7 @@ import type {
   PhysicalDevice,
   SanitizationMethod,
   TargetType,
+  VerificationMode,
 } from "../types/api";
 
 const REQUIRED_PHRASE = "I UNDERSTAND DATA WILL BECOME IRRECOVERABLE";
@@ -35,6 +36,8 @@ export default function Sanitize() {
   const [selectedMethod, setSelectedMethod] = useState<string>("");
   const [acknowledge, setAcknowledge] = useState(false);
   const [confirmPhrase, setConfirmPhrase] = useState("");
+  const [verificationMode, setVerificationMode] = useState<VerificationMode>("sampled");
+  const [readbackSeconds, setReadbackSeconds] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Operation | null>(null);
@@ -60,6 +63,18 @@ export default function Sanitize() {
     setError(null);
   };
 
+  const method = methods.find((m) => m.key === selectedMethod);
+  const fullReadbackAvailable = targetType === "physical" && !!method?.supports_full_readback;
+  const effectiveVerificationMode: VerificationMode = fullReadbackAvailable ? verificationMode : "sampled";
+
+  useEffect(() => {
+    setReadbackSeconds(null);
+    if (!selectedDevice?.capacity_bytes) return;
+    api.verificationEstimate(selectedDevice.capacity_bytes).then((r) => setReadbackSeconds(r.full_readback_seconds)).catch(() => {});
+  }, [selectedDevice]);
+
+  const formatDuration = (s: number) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : `${Math.max(1, Math.round(s / 60))} min`);
+
   const canExecute =
     selectedMethod !== "" &&
     ((targetType === "image" && selectedImage) ||
@@ -76,6 +91,7 @@ export default function Sanitize() {
         method: selectedMethod,
         acknowledge_irrecoverable: targetType === "physical" ? acknowledge : undefined,
         confirm_phrase: targetType === "physical" ? confirmPhrase : undefined,
+        verification_mode: targetType === "physical" ? effectiveVerificationMode : undefined,
       });
       setResult(op);
     } catch (e) {
@@ -258,6 +274,28 @@ export default function Sanitize() {
           )}
           {" · "}Method: <span className="text-slate-200">{selectedMethod || "none selected"}</span>
         </div>
+        {fullReadbackAvailable && (
+          <div className="mb-3 rounded-lg border border-slate-700 bg-slate-950/40 p-3 text-xs text-slate-300">
+            <div className="mb-2 font-semibold text-slate-200">Post-wipe verification</div>
+            <label className="flex items-start gap-2">
+              <input type="radio" checked={verificationMode === "sampled"} onChange={() => setVerificationMode("sampled")} />
+              <span>
+                <b>Sampled (default, fast)</b> — reads 16 windows spread across the device. Evidence only: data
+                between the windows is not examined.
+              </span>
+            </label>
+            <label className="mt-2 flex items-start gap-2">
+              <input type="radio" checked={verificationMode === "full_readback"} onChange={() => setVerificationMode("full_readback")} />
+              <span>
+                <b>Full read-back</b> — reads every addressable byte after the wipe and confirms all are zero.
+                {readbackSeconds != null && (
+                  <> Estimated extra time: <b>~{formatDuration(readbackSeconds)}</b> (estimate; depends on the device).</>
+                )}{" "}
+                Does not prove remapped sectors, hidden areas or every flash cell were sanitized.
+              </span>
+            </label>
+          </div>
+        )}
         <button
           disabled={!canExecute || busy}
           onClick={execute}

@@ -24,6 +24,8 @@ from app.sanitization.physical import (
     _online_disk_windows,
     overwrite_device_passes,
     unmount_device,
+    get_device_length,
+    verify_device_full_readback,
     verify_device_zeroed,
 )
 from app.sanitization.policy import get_method
@@ -204,6 +206,23 @@ def _run_physical(db: Session, operation: Operation) -> None:
             _online_disk_windows(disk_index)
         return
 
+    # --- Size the work from the device itself, not the OS-reported figure ---
+    reported_capacity = device.capacity_bytes
+    measured_capacity = get_device_length(device_id, reported_capacity)
+    io_capacity = measured_capacity or reported_capacity
+    if measured_capacity and reported_capacity and measured_capacity != reported_capacity:
+        operation.warnings = [
+            *operation.warnings,
+            f"OS-reported capacity ({reported_capacity} bytes) differs from the measured device length "
+            f"({measured_capacity} bytes); the measured length was used for the overwrite and verification.",
+        ]
+    elif not measured_capacity:
+        operation.warnings = [
+            *operation.warnings,
+            "Could not measure the device length; the OS-reported capacity was used and the "
+            "tail of the device may not be covered.",
+        ]
+
     # --- Perform the actual overwrite ---
     append_event(
         db, "physical_overwrite_started", operation.id,
@@ -213,7 +232,7 @@ def _run_physical(db: Session, operation: Operation) -> None:
     try:
         pass_records = overwrite_device_passes(
             device_id=device_id,
-            capacity_bytes=device.capacity_bytes,
+            capacity_bytes=io_capacity,
             passes=method.passes,
         )
     except PhysicalWipeError as exc:
@@ -231,30 +250,31 @@ def _run_physical(db: Session, operation: Operation) -> None:
         {"passes": len(pass_records), "total_bytes_written": total_written},
     )
 
-    # --- Verify by sampling ---
-    verify_result = verify_device_zeroed(device_id, device.capacity_bytes)
+    # --- Verify (read-only): sampled by default, full read-back if the operator chose it ---
+    final_pass = method.passes[-1]
+    requested_mode = operation.evidence.get("requested_verification_mode", "sampled")
+    verify_args = (device_id, io_capacity)
+    if requested_mode == "full_readback" and final_pass == "zero":
+        verify_result = verify_device_full_readback(*verify_args, expect_zero=True)
+    else:
+        verify_result = verify_device_zeroed(*verify_args, expect_zero=(final_pass == "zero"))
+    verify_result["operation_id"] = operation.id
 
-    # Determine verification status
-    if verify_result.get("verification_error"):
+    # Determine verification status. An incomplete read is never "verified".
+    if verify_result["status"] == "inconclusive" or total_written == 0:
         verification_status = "inconclusive"
         operation.warnings = [
             *operation.warnings,
-            f"Post-wipe verification could not read device: {verify_result['verification_error']}",
+            "Post-wipe verification incomplete: "
+            f"{verify_result.get('verification_error', 'no data was written')}",
         ]
-    elif verify_result["status"] == "verified" and total_written > 0:
-        # For zero-fill final pass: check non_zero_bytes
-        final_pass = method.passes[-1] if method.passes else "zero"
-        if final_pass == "zero" and verify_result.get("non_zero_bytes_found", 0) == 0:
-            verification_status = "verified"
-        elif final_pass == "random" and total_written > 0:
-            # Random fill means non-zero is expected; just verify writes happened
-            verification_status = "verified"
-        elif final_pass == "one" and verify_result.get("non_zero_bytes_found", 0) > 0:
-            verification_status = "verified"
-        else:
-            verification_status = "inconclusive"
-    else:
+    elif final_pass == "zero":
+        verification_status = verify_result["status"]  # verified | failed (non-zero data found)
+    elif final_pass == "one" and verify_result.get("non_zero_bytes_found", 0) == 0:
         verification_status = "inconclusive"
+    else:
+        # Random/one-fill: non-zero is expected; only readability and writes are confirmed.
+        verification_status = "verified"
 
     # Bring disk back online
     online_warnings: list[str] = []
@@ -272,7 +292,9 @@ def _run_physical(db: Session, operation: Operation) -> None:
         "device": device.to_dict(),
         "overwrite_passes": pass_records,
         "total_bytes_written": total_written,
-        "verification_sampling": verify_result,
+        "reported_capacity_bytes": reported_capacity,
+        "measured_capacity_bytes": measured_capacity,
+        "verification": verify_result,
         "unmount_warnings": unmount_warnings,
     }
     operation.limitations = [
@@ -282,5 +304,5 @@ def _run_physical(db: Session, operation: Operation) -> None:
 
     append_event(
         db, "verification_performed", operation.id,
-        {"verification_status": verification_status, "sampling": verify_result},
+        {"verification_status": verification_status, "verification": verify_result},
     )

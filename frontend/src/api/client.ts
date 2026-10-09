@@ -54,6 +54,8 @@ export const api = {
   health: () => request<{ status: string; app_name: string; app_version: string }>("/health"),
   devices: () => request<DevicesResponse>("/devices"),
   methods: () => request<SanitizationMethod[]>("/methods"),
+  verificationEstimate: (capacityBytes: number) =>
+    request<{ full_readback_seconds: number | null }>(`/verification/estimate?capacity_bytes=${capacityBytes}`),
 
   listOperations: () => request<Operation[]>("/operations"),
   getOperation: (id: string) => request<Operation>(`/operations/${id}`),
@@ -64,6 +66,7 @@ export const api = {
     capacity_bytes?: number;
     confirm_phrase?: string;
     acknowledge_irrecoverable?: boolean;
+    verification_mode?: "sampled" | "full_readback";
   }) => request<Operation>("/operations", { method: "POST", body: JSON.stringify(payload) }, true),
   reverifyOperation: (id: string) => request<Operation>(`/operations/${id}/verify`, { method: "POST" }, true),
 

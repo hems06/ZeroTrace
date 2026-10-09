@@ -8,6 +8,7 @@ PDF re-rendering and is checked independently of the static file.
 from __future__ import annotations
 
 import json
+from xml.sax.saxutils import escape as xml_escape
 from datetime import datetime
 
 from reportlab.lib import colors
@@ -96,7 +97,11 @@ def _build_pdf(path, payload: dict, signature_b64: str, content_hash: str, finge
     )
     flow.append(Spacer(1, 8))
 
+    cell_style = ParagraphStyle("TECell", parent=styles["Normal"], fontSize=9, leading=11)
+
     def kv_table(rows):
+        # Wrap (and escape) value cells so long values don't overflow the page.
+        rows = [[k, Paragraph(xml_escape(str(v)), cell_style)] for k, v in rows]
         t = Table(rows, colWidths=[55 * mm, 120 * mm])
         t.setStyle(
             TableStyle(
@@ -141,8 +146,37 @@ def _build_pdf(path, payload: dict, signature_b64: str, content_hash: str, finge
     )
     flow.append(Spacer(1, 8))
 
+    verification = payload["evidence"].get("verification")
+    if isinstance(verification, dict):
+        flow.append(Paragraph("Post-sanitization verification", h2))
+        method_label = {
+            "sampled": "SAMPLED (partial read-back)",
+            "full_readback": "FULL READ-BACK (all addressable bytes)",
+        }.get(verification.get("method"), str(verification.get("method")))
+        offsets = verification.get("sample_offsets")
+        rows = [
+            ["Method", method_label],
+            ["Result", str(verification.get("status"))],
+            ["Operation", str(verification.get("operation_id", payload["operation_id"]))],
+            ["Device capacity (bytes)", str(verification.get("device_capacity_bytes"))],
+            ["Bytes checked", str(verification.get("bytes_checked"))],
+            ["Non-zero bytes found", str(verification.get("non_zero_bytes_found"))],
+            ["Short reads", str(verification.get("short_reads"))],
+            ["Read errors", str(verification.get("read_errors") or "None")],
+            ["Started (UTC)", str(verification.get("started_at"))],
+            ["Completed (UTC)", str(verification.get("completed_at"))],
+        ]
+        if offsets:
+            rows.insert(5, ["Samples", f"{verification.get('samples_checked')} x {verification.get('sample_size_bytes')} bytes"])
+            rows.insert(6, ["Sample offsets", ", ".join(str(o) for o in offsets)])
+        if verification.get("warnings"):
+            rows.append(["Warnings", "; ".join(verification["warnings"])])
+        rows.append(["Limitations", str(verification.get("limitations", ""))])
+        flow.append(kv_table(rows))
+        flow.append(Spacer(1, 8))
+
     flow.append(Paragraph("Verification evidence", h2))
-    evidence_rows = [[k, str(v)[:400]] for k, v in payload["evidence"].items()]
+    evidence_rows = [[k, str(v)[:400]] for k, v in payload["evidence"].items() if k != "verification"]
     if evidence_rows:
         flow.append(kv_table(evidence_rows))
     else:

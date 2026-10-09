@@ -132,6 +132,87 @@ def _extract_disk_index(device_id: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _windows_length_ioctl(device_id: str) -> int | None:
+    """IOCTL_DISK_GET_LENGTH_INFO: the real addressable size of a raw disk. READ-ONLY."""
+    import ctypes
+    from ctypes import wintypes
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                              wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    k.CreateFileW.restype = wintypes.HANDLE
+    k.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                  wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                  wintypes.LPVOID]
+    k.DeviceIoControl.restype = wintypes.BOOL
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = k.CreateFileW(device_id, 0, 3, None, 3, 0, None)  # no access rights, share r/w, OPEN_EXISTING
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return None
+    try:
+        length = ctypes.c_longlong(0)
+        returned = wintypes.DWORD(0)
+        ok = k.DeviceIoControl(handle, 0x7405C, None, 0, ctypes.byref(length), 8,
+                               ctypes.byref(returned), None)
+        return int(length.value) if ok and length.value > 0 else None
+    finally:
+        k.CloseHandle(handle)
+
+
+def _probe_length(device_id: str, hint: int, _open=open) -> int | None:
+    """Fallback: find the last readable sector at/after `hint` by doubling + bisection. READ-ONLY."""
+    try:
+        with _open(device_id, "rb", buffering=0) as f:
+            def readable(off: int) -> bool:
+                try:
+                    f.seek(off)
+                    return len(f.read(_SECTOR)) == _SECTOR
+                except OSError:
+                    return False
+
+            start = max(0, hint - _SECTOR) // _SECTOR * _SECTOR
+            if not readable(start):
+                return None
+            lo, step = start, _SECTOR
+            while readable(lo + step) and step < (1 << 42):
+                lo += step
+                step *= 2
+            hi = lo + step
+            while hi - lo > _SECTOR:
+                mid = (lo + hi) // 2 // _SECTOR * _SECTOR
+                if mid <= lo:
+                    break
+                if readable(mid):
+                    lo = mid
+                else:
+                    hi = mid
+            return lo + _SECTOR
+    except OSError:
+        return None
+
+
+def get_device_length(device_id: str, reported_bytes: int | None = None) -> int | None:
+    """Real addressable length of a block device, or None if it cannot be determined.
+
+    Windows' Win32_DiskDrive.Size can be *smaller* than the disk (a real 32 GB
+    stick reported 7.5 MiB short), so sizing a wipe or a verification from it
+    would leave the tail untouched/unexamined. READ-ONLY.
+    """
+    if platform.system() == "Windows":
+        try:
+            length = _windows_length_ioctl(device_id)
+        except Exception:  # noqa: BLE001 - fall through to probing
+            length = None
+        if length:
+            return length
+        return _probe_length(device_id, reported_bytes) if reported_bytes else None
+    try:
+        with open(device_id, "rb") as f:
+            return f.seek(0, 2) or None
+    except OSError:
+        return None
+
+
 def overwrite_device_passes(
     device_id: str,
     capacity_bytes: int | None,
@@ -209,6 +290,88 @@ def overwrite_device_passes(
 
 _SECTOR = 4096  # read offsets/lengths are multiples of this (raw devices require alignment)
 _VERIFY_SAMPLES = 16
+_FULL_CHUNK = 4 * 1024 * 1024  # bounded read size for full read-back (never the whole device)
+# Conservative read throughput used only to *estimate* full read-back duration.
+FULL_READBACK_ASSUMED_BYTES_PER_SEC = 20 * 1024 * 1024
+
+VERIFICATION_LIMITATIONS = {
+    "sampled": (
+        "Sampled verification: only the listed windows were read back. Data outside "
+        "those windows was NOT examined, so this is evidence, not proof, that the whole "
+        "device was overwritten. It does not cover remapped sectors, hidden areas or "
+        "unaddressable flash cells."
+    ),
+    "full_readback": (
+        "Full read-back verification: every addressable byte the device returned was "
+        "read and examined. This does not show that remapped sectors, hidden or "
+        "over-provisioned areas, or all physical flash cells were sanitized; device-level "
+        "sanitize commands may be required for that."
+    ),
+}
+
+
+def estimate_full_readback_seconds(capacity_bytes: int | None) -> int | None:
+    """Rough duration of a full read-back (None if capacity unknown)."""
+    if not capacity_bytes:
+        return None
+    return int(capacity_bytes / FULL_READBACK_ASSUMED_BYTES_PER_SEC) + 1
+
+
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+
+def _new_record(method: str, capacity_bytes: int | None, expect_zero: bool) -> dict:
+    return {
+        "method": method,  # "sampled" | "full_readback"
+        "status": "inconclusive",  # verified | failed | inconclusive
+        "device_capacity_bytes": capacity_bytes,
+        "expected_pattern": "zero" if expect_zero else "not_checked",
+        "bytes_checked": 0,
+        "non_zero_bytes_found": 0,
+        "short_reads": 0,
+        "read_errors": [],  # [{"offset": int, "error": str}]
+        "warnings": [],
+        "started_at": _utc_now(),
+        "completed_at": None,
+        "limitations": VERIFICATION_LIMITATIONS[method],
+    }
+
+
+def _finish(rec: dict, complete: bool) -> dict:
+    """Derive the final status. Only a *complete* read can be verified/failed."""
+    rec["read_complete"] = complete
+    rec["completed_at"] = _utc_now()
+    if rec["read_errors"]:
+        rec["verification_error"] = rec["read_errors"][0]["error"]
+    elif rec["warnings"] and not complete:
+        rec["verification_error"] = rec["warnings"][0]
+    if not complete:
+        rec["status"] = "inconclusive"
+    elif rec["expected_pattern"] == "zero":
+        rec["status"] = "verified" if rec["non_zero_bytes_found"] == 0 else "failed"
+    else:
+        rec["status"] = "verified"  # content pattern not checked; read completed
+        rec["warnings"].append("Final pass is not zero-fill; only readability was confirmed.")
+    return rec
+
+
+def _read_exact(f, want: int) -> tuple[bytes, int]:
+    """Read up to `want` bytes, retrying after short reads. Returns (data, short_read_count)."""
+    parts: list[bytes] = []
+    got = 0
+    shorts = 0
+    while got < want:
+        chunk = f.read(want - got)
+        if not chunk:
+            break
+        if len(chunk) < want - got:
+            shorts += 1
+        parts.append(chunk)
+        got += len(chunk)
+    return b"".join(parts), shorts
 
 
 def _sample_offsets(capacity: int, sample_size: int, count: int) -> list[int]:
@@ -224,39 +387,101 @@ def verify_device_zeroed(
     device_id: str,
     capacity_bytes: int | None = None,
     sample_size: int = 1024 * 1024,
+    expect_zero: bool = True,
+    _open=open,
 ) -> dict:
-    """Read back samples across the device and count non-zero bytes.
+    """Sampled read-back: `_VERIFY_SAMPLES` evenly spaced windows (head and tail
+    included), placed using the capacity from discovery -- seeking to the end of
+    a raw Windows disk does not report its size. READ-ONLY.
 
-    Samples `_VERIFY_SAMPLES` evenly spaced windows (head and tail included)
-    using the capacity reported by discovery -- seeking to the end of a raw
-    Windows disk does not report its size. This is sampling, not a full read:
-    it gives evidence, not proof, that every sector was overwritten.
+    Returns a structured verification record (see `_new_record`). Any read error,
+    short read or unknown capacity yields status "inconclusive", never "verified".
     """
-    result: dict = {
-        "samples_checked": 0,
-        "bytes_checked": 0,
-        "non_zero_bytes_found": 0,
-        "status": "inconclusive",
-    }
-    if not capacity_bytes:
-        result["verification_error"] = "Device capacity unknown; cannot place verification samples."
-        return result
+    rec = _new_record("sampled", capacity_bytes, expect_zero)
+    rec["samples_checked"] = 0
+    if not capacity_bytes or capacity_bytes < 0:
+        rec["warnings"].append("Device capacity unknown; cannot place verification samples.")
+        return _finish(rec, False)
 
     sample_size = max(_SECTOR, min(sample_size, capacity_bytes) // _SECTOR * _SECTOR)
+    offsets = _sample_offsets(capacity_bytes, sample_size, _VERIFY_SAMPLES)
+    rec["sample_size_bytes"] = sample_size
+    rec["sample_offsets"] = offsets
+    complete = True
     try:
-        with open(device_id, "rb", buffering=0) as f:
-            for offset in _sample_offsets(capacity_bytes, sample_size, _VERIFY_SAMPLES):
+        with _open(device_id, "rb", buffering=0) as f:
+            for offset in offsets:
                 f.seek(offset)
-                buf = f.read(sample_size)
-                if not buf:
-                    result["verification_error"] = f"Read returned no data at offset {offset}."
-                    return result
-                result["samples_checked"] += 1
-                result["bytes_checked"] += len(buf)
-                result["non_zero_bytes_found"] += len(buf) - buf.count(0)
+                buf, shorts = _read_exact(f, sample_size)
+                rec["short_reads"] += shorts
+                rec["bytes_checked"] += len(buf)
+                rec["non_zero_bytes_found"] += len(buf) - buf.count(0)
+                if len(buf) < sample_size:
+                    rec["warnings"].append(
+                        f"Incomplete read at offset {offset}: got {len(buf)} of {sample_size} bytes."
+                    )
+                    complete = False
+                    break
+                rec["samples_checked"] += 1
     except OSError as exc:
-        result["verification_error"] = str(exc)
-        return result
+        rec["read_errors"].append({"offset": rec["bytes_checked"], "error": str(exc)})
+        complete = False
+    return _finish(rec, complete)
 
-    result["status"] = "verified"
-    return result
+
+def verify_device_full_readback(
+    device_id: str,
+    capacity_bytes: int | None,
+    expect_zero: bool = True,
+    chunk_size: int = _FULL_CHUNK,
+    _open=open,
+) -> dict:
+    """Full read-back: read the entire addressable capacity sequentially in
+    bounded chunks (never holding more than one chunk in memory) and count
+    non-zero bytes. READ-ONLY; never writes to the device.
+
+    Verified only if every byte of the reported capacity was read and, for a
+    zero-fill, all were zero. A read error, short/empty read before capacity,
+    unknown capacity, or the device returning data past its reported capacity
+    all yield "inconclusive".
+    """
+    rec = _new_record("full_readback", capacity_bytes, expect_zero)
+    rec["chunk_size_bytes"] = chunk_size
+    if not capacity_bytes or capacity_bytes < 0:
+        rec["warnings"].append("Device capacity unknown; cannot perform full read-back.")
+        return _finish(rec, False)
+
+    complete = False
+    try:
+        with _open(device_id, "rb", buffering=0) as f:
+            pos = 0
+            while pos < capacity_bytes:
+                want = min(chunk_size, capacity_bytes - pos)
+                buf, shorts = _read_exact(f, want)
+                rec["short_reads"] += shorts
+                rec["bytes_checked"] += len(buf)
+                rec["non_zero_bytes_found"] += len(buf) - buf.count(0)
+                pos += len(buf)
+                if len(buf) < want:
+                    rec["warnings"].append(
+                        f"Device ended early: read {pos} of {capacity_bytes} reported bytes "
+                        "(capacity inconsistent with device)."
+                    )
+                    break
+            else:
+                complete = True
+                # Capacity consistency: nothing should be readable past the end.
+                try:
+                    extra = f.read(_SECTOR)
+                except OSError:
+                    extra = b""  # reading past the end of a raw device may raise; that's expected
+                if extra:
+                    rec["warnings"].append(
+                        "Device returned data beyond its reported capacity "
+                        "(capacity inconsistent with device); coverage cannot be established."
+                    )
+                    complete = False
+    except OSError as exc:
+        rec["read_errors"].append({"offset": rec["bytes_checked"], "error": str(exc)})
+        complete = False
+    return _finish(rec, complete)

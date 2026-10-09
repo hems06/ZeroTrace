@@ -31,7 +31,10 @@ export interface SanitizationMethod {
   policy_level: "clear" | "purge" | "destroy";
   policy_reference: string;
   limitations: string;
+  supports_full_readback: boolean;
 }
+
+export type VerificationMode = "sampled" | "full_readback";
 
 export type TargetType = "image" | "physical";
 

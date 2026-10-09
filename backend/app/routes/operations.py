@@ -42,6 +42,15 @@ def create_operation(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
+    if payload.verification_mode == "full_readback":
+        if payload.target_type != "physical":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Full read-back verification applies to physical devices only.")
+        if not method.passes or method.passes[-1] != "zero":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Full read-back verification is only supported for methods whose final pass is a zero overwrite.",
+            )
+
     operation_id = new_id("OP")
 
     if payload.target_type == "image":
@@ -77,7 +86,7 @@ def create_operation(
         target_label = device.name
         capacity_bytes = device.capacity_bytes
         media_type = device.media_type
-        evidence_seed = {"confirm_phrase": payload.confirm_phrase}
+        evidence_seed = {"confirm_phrase": payload.confirm_phrase, "requested_verification_mode": payload.verification_mode}
 
     else:  # pragma: no cover - constrained by Literal in schema
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported target_type.")

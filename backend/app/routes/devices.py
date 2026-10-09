@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.devices.discovery import discover_physical_devices_detailed
 from app.devices.images import list_images
+from app.sanitization.physical import FULL_READBACK_ASSUMED_BYTES_PER_SEC, estimate_full_readback_seconds
 from app.sanitization.policy import list_methods
 from app.schemas import DevicesResponse, ImageTargetOut, MethodOut, PhysicalDeviceOut
 
@@ -19,6 +20,16 @@ def get_devices() -> DevicesResponse:
 
     images = [ImageTargetOut(**img) for img in list_images()]
     return DevicesResponse(physical_devices=physical, image_targets=images, discovery_warnings=warnings)
+
+
+@router.get("/verification/estimate")
+def verification_estimate(capacity_bytes: int) -> dict:
+    """Estimated duration of a full read-back (an estimate only; real speed depends on the device)."""
+    return {
+        "capacity_bytes": capacity_bytes,
+        "full_readback_seconds": estimate_full_readback_seconds(capacity_bytes),
+        "assumed_bytes_per_second": FULL_READBACK_ASSUMED_BYTES_PER_SEC,
+    }
 
 
 @router.get("/methods", response_model=list[MethodOut])

@@ -45,6 +45,7 @@ class MethodOut(BaseModel):
     policy_level: str
     policy_reference: str
     limitations: str
+    supports_full_readback: bool = False
 
 
 class OperationCreate(BaseModel):
@@ -55,6 +56,8 @@ class OperationCreate(BaseModel):
     # Required only for target_type == "physical"
     confirm_phrase: str | None = None
     acknowledge_irrecoverable: bool = False
+    # Physical zero-overwrite only. "sampled" (default, fast) or "full_readback" (reads every byte).
+    verification_mode: Literal["sampled", "full_readback"] = "sampled"
 
 
 class OperationOut(BaseModel):

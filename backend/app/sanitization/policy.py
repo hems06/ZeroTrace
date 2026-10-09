@@ -79,6 +79,8 @@ def list_methods() -> list[dict]:
             "policy_level": m.policy_level,
             "policy_reference": m.policy_reference,
             "limitations": m.limitations,
+            # Full read-back can confirm a zero-fill only.
+            "supports_full_readback": bool(m.passes) and m.passes[-1] == "zero",
         }
         for m in METHODS.values()
     ]
