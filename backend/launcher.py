@@ -42,6 +42,20 @@ def _open_browser_when_ready(port: int, url: str) -> None:
 
 
 def main() -> None:
+    import platform
+    if platform.system() == "Windows":
+        import ctypes
+        import sys
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+        except Exception:
+            is_admin = False
+            
+        if not is_admin:
+            print("Requesting Administrator privileges for physical device operations...")
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+            sys.exit(0)
+
     port = _find_free_port(8000)
     url = f"http://127.0.0.1:{port}"
 
