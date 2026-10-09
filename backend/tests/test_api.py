@@ -18,12 +18,12 @@ def test_health(client):
 
 
 def test_unauthorized_operation_creation_rejected(client):
-    r = client.post("/api/operations", json={"target_type": "demo", "method": "clear-single-pass-zero"})
+    r = client.post("/api/operations", json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"})
     assert r.status_code == 401
 
     r2 = client.post(
         "/api/operations",
-        json={"target_type": "demo", "method": "clear-single-pass-zero"},
+        json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"},
         headers={"X-Operator-Token": "wrong-token"},
     )
     assert r2.status_code == 403
@@ -32,7 +32,7 @@ def test_unauthorized_operation_creation_rejected(client):
 def test_invalid_method_rejected(client, auth_headers):
     r = client.post(
         "/api/operations",
-        json={"target_type": "demo", "method": "not-a-real-method"},
+        json={"target_type": "image", "target_identifier": "test_disk.img", "method": "not-a-real-method"},
         headers=auth_headers,
     )
     assert r.status_code == 400
@@ -65,16 +65,16 @@ def test_image_not_found_rejected_via_api(client, auth_headers):
     assert r.status_code == 400
 
 
-def test_demo_operation_end_to_end_via_api(client, auth_headers):
+def test_image_operation_end_to_end_via_api(client, auth_headers, sample_image):
     r = client.post(
         "/api/operations",
-        json={"target_type": "demo", "method": "clear-single-pass-zero"},
+        json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"},
         headers=auth_headers,
     )
     assert r.status_code == 201
     body = r.json()
     assert body["status"] == "completed"
-    assert body["simulation_only"] is True
+    assert body["simulation_only"] is False
 
     cert_r = client.post(f"/api/certificates/for-operation/{body['id']}", headers=auth_headers)
     assert cert_r.status_code == 201
@@ -155,36 +155,7 @@ def test_physical_operation_rejects_system_disk(client, auth_headers, monkeypatc
     assert "system/OS disk" in body["errors"][0]
 
 
-def test_physical_operation_blocked_by_default_safety_flag(client, auth_headers, monkeypatch):
-    removable = PhysicalDevice(
-        device_id="/dev/fake1",
-        name="Fake Removable Drive",
-        capacity_bytes=8 * 1024 * 1024 * 1024,
-        interface="USB",
-        media_type="Removable",
-        is_system_disk=False,
-        is_mounted=False,
-    )
-    _patch_devices(monkeypatch, [removable])
-
-    r = client.post(
-        "/api/operations",
-        json={
-            "target_type": "physical",
-            "target_identifier": "/dev/fake1",
-            "method": "clear-single-pass-zero",
-            "acknowledge_irrecoverable": True,
-            "confirm_phrase": REQUIRED_PHYSICAL_PHRASE,
-        },
-        headers=auth_headers,
-    )
-    assert r.status_code == 201
-    body = r.json()
-    assert body["status"] == "blocked_safety_disabled"
-    assert body["simulation_only"] is True
-
-
-def test_interrupted_operation_reports_failure_not_false_success(client, auth_headers, monkeypatch):
+def test_interrupted_operation_reports_failure_not_false_success(client, auth_headers, sample_image, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("simulated disk I/O interruption")
 
@@ -192,7 +163,7 @@ def test_interrupted_operation_reports_failure_not_false_success(client, auth_he
 
     r = client.post(
         "/api/operations",
-        json={"target_type": "demo", "method": "clear-single-pass-zero"},
+        json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"},
         headers=auth_headers,
     )
     assert r.status_code == 201
@@ -202,8 +173,8 @@ def test_interrupted_operation_reports_failure_not_false_success(client, auth_he
     assert body["verification_status"] == "not_run"
 
 
-def test_audit_log_and_chain_endpoints(client, auth_headers):
-    client.post("/api/operations", json={"target_type": "demo", "method": "clear-single-pass-zero"}, headers=auth_headers)
+def test_audit_log_and_chain_endpoints(client, auth_headers, sample_image):
+    client.post("/api/operations", json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"}, headers=auth_headers)
     events = client.get("/api/audit").json()
     assert len(events) > 0
 
@@ -211,17 +182,17 @@ def test_audit_log_and_chain_endpoints(client, auth_headers):
     assert chain["intact"] is True
 
 
-def test_dashboard_summary_reflects_real_state(client, auth_headers):
+def test_dashboard_summary_reflects_real_state(client, auth_headers, sample_image):
     before = client.get("/api/dashboard/summary").json()["total_operations"]
-    client.post("/api/operations", json={"target_type": "demo", "method": "clear-single-pass-zero"}, headers=auth_headers)
+    client.post("/api/operations", json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"}, headers=auth_headers)
     after = client.get("/api/dashboard/summary").json()["total_operations"]
     assert after == before + 1
 
 
-def test_reverify_endpoint_requires_finished_operation(client, auth_headers):
+def test_reverify_endpoint_requires_finished_operation(client, auth_headers, sample_image):
     r = client.post(
         "/api/operations",
-        json={"target_type": "demo", "method": "clear-single-pass-zero"},
+        json={"target_type": "image", "target_identifier": "test_disk.img", "method": "clear-single-pass-zero"},
         headers=auth_headers,
     )
     op_id = r.json()["id"]

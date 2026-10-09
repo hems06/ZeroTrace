@@ -29,7 +29,7 @@ function formatBytes(n: number | null): string {
 export default function Sanitize() {
   const [devices, setDevices] = useState<DevicesResponse | null>(null);
   const [methods, setMethods] = useState<SanitizationMethod[]>([]);
-  const [targetType, setTargetType] = useState<TargetType>("image");
+  const [targetType, setTargetType] = useState<TargetType>("physical");
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<PhysicalDevice | null>(null);
   const [selectedMethod, setSelectedMethod] = useState<string>("");
@@ -62,8 +62,7 @@ export default function Sanitize() {
 
   const canExecute =
     selectedMethod !== "" &&
-    (targetType === "demo" ||
-      (targetType === "image" && selectedImage) ||
+    ((targetType === "image" && selectedImage) ||
       (targetType === "physical" && selectedDevice && acknowledge && confirmPhrase === REQUIRED_PHRASE));
 
   const execute = async () => {
@@ -111,7 +110,7 @@ export default function Sanitize() {
           </button>
         </div>
         <div className="mb-4 flex gap-2">
-          {(["demo", "image", "physical"] as TargetType[]).map((t) => (
+          {(["physical", "image"] as TargetType[]).map((t) => (
             <button
               key={t}
               onClick={() => {
@@ -124,17 +123,10 @@ export default function Sanitize() {
                 targetType === t ? "bg-trust-700 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700"
               }`}
             >
-              {t === "demo" ? "Demonstration" : t === "image" ? "Image-based test" : "Physical device"}
+              {t === "image" ? "Image-based test" : "Physical device"}
             </button>
           ))}
         </div>
-
-        {targetType === "demo" && (
-          <div className="rounded-lg border border-indigo-800 bg-indigo-950/30 p-3 text-sm text-indigo-200">
-            Operates only on a freshly generated synthetic dataset inside an isolated workspace. No real
-            device, image, or file is touched. Always available, no USB required.
-          </div>
-        )}
 
         {targetType === "image" && (
           <div className="space-y-2">
@@ -282,7 +274,6 @@ export default function Sanitize() {
             <h2 className="text-sm font-semibold text-slate-200">Outcome</h2>
             <StatusBadge status={result.status} />
             <StatusBadge status={result.verification_status} />
-            {result.simulation_only && <StatusBadge status="Simulation Only" />}
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div>

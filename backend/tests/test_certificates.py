@@ -14,7 +14,7 @@ def _completed_image_operation(db_session, sample_image) -> Operation:
         target_identifier=sample_image,
         target_label=f"Image: {sample_image}",
         capacity_bytes=2 * 1024 * 1024,
-        media_type="demo-disk-image",
+        media_type="disk-image",
         method="clear-single-pass-zero",
         policy_level="clear",
         policy_reference="test",
@@ -72,31 +72,3 @@ def test_certificate_verification_detects_tampered_signature(db_session, sample_
     result = verify_certificate(db_session, cert)
     assert result["valid"] is False
     assert result["signature_valid"] is False
-
-
-def test_simulation_only_certificate_is_labeled_honestly(db_session):
-    operation = Operation(
-        id=new_id("OP"),
-        target_type="demo",
-        target_identifier="synthetic-demo-dataset",
-        target_label="Synthetic demo dataset",
-        capacity_bytes=1024 * 1024,
-        media_type="demo-synthetic",
-        method="clear-single-pass-zero",
-        policy_level="clear",
-        policy_reference="test",
-        status="pending",
-        verification_status="not_run",
-        simulation_only=True,
-        operator_id="test-operator",
-        evidence={},
-        errors=[],
-        warnings=[],
-        limitations=[],
-    )
-    db_session.add(operation)
-    db_session.commit()
-    run_operation(db_session, operation)
-
-    cert = create_certificate(db_session, operation)
-    assert cert.final_status == "Simulation Only"

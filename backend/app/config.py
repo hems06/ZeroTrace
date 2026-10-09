@@ -52,10 +52,6 @@ class Settings(BaseSettings):
     # override in production via env var / .env.
     operator_keys: str = "demo-operator:demo-token"
 
-    # Physical-device destructive execution is disabled unless explicitly
-    # enabled. Even when enabled, additional per-request guards still apply.
-    allow_physical_execution: bool = True
-
     def operator_map(self) -> dict[str, str]:
         pairs = [p.strip() for p in self.operator_keys.split(",") if p.strip()]
         result: dict[str, str] = {}

@@ -48,7 +48,7 @@ class MethodOut(BaseModel):
 
 
 class OperationCreate(BaseModel):
-    target_type: Literal["demo", "image", "physical"]
+    target_type: Literal["image", "physical"]
     target_identifier: str = Field(default="", max_length=512)
     method: str
     capacity_bytes: int | None = Field(default=None, ge=1, le=1024 * 1024 * 1024)

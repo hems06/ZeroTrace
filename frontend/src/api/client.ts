@@ -58,7 +58,7 @@ export const api = {
   listOperations: () => request<Operation[]>("/operations"),
   getOperation: (id: string) => request<Operation>(`/operations/${id}`),
   createOperation: (payload: {
-    target_type: "demo" | "image" | "physical";
+    target_type: "image" | "physical";
     target_identifier?: string;
     method: string;
     capacity_bytes?: number;

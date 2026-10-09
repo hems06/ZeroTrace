@@ -43,7 +43,7 @@ def test_verify_detects_failed_sanitization_when_markers_survive(sample_image):
     working_copy.unlink()
 
 
-def test_verify_is_inconclusive_when_scan_exceeds_demo_cap(monkeypatch, sample_image):
+def test_verify_is_inconclusive_when_scan_exceeds_scan_cap(monkeypatch, sample_image):
     monkeypatch.setattr(verifier_module, "MAX_FULL_SCAN_BYTES", 0)
     image = image_lib.resolve_image(sample_image)
     working_copy = image_lib.make_working_copy(image, "OP-VERIFYINC")

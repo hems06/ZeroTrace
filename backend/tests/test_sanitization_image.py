@@ -13,7 +13,7 @@ def _make_image_operation(db_session, identifier: str, method: str) -> Operation
         target_identifier=identifier,
         target_label=f"Image: {identifier}",
         capacity_bytes=2 * 1024 * 1024,
-        media_type="demo-disk-image",
+        media_type="disk-image",
         method=method,
         policy_level="clear",
         policy_reference="test",
@@ -57,37 +57,6 @@ def test_image_sanitization_cleans_up_working_copy(db_session, sample_image):
 
     leftover = list(settings.workspace_dir.glob(f"{operation.id}__*"))
     assert leftover == []
-
-
-def test_demo_mode_never_touches_real_files(db_session):
-    operation = Operation(
-        id=new_id("OP"),
-        target_type="demo",
-        target_identifier="synthetic-demo-dataset",
-        target_label="Synthetic demo dataset",
-        capacity_bytes=1024 * 1024,
-        media_type="demo-synthetic",
-        method="clear-single-pass-zero",
-        policy_level="clear",
-        policy_reference="test",
-        status="pending",
-        verification_status="not_run",
-        simulation_only=True,
-        operator_id="test-operator",
-        evidence={},
-        errors=[],
-        warnings=[],
-        limitations=[],
-    )
-    db_session.add(operation)
-    db_session.commit()
-
-    result = run_operation(db_session, operation)
-
-    assert result.simulation_only is True
-    assert result.status == "completed"
-    assert result.evidence["mode"] == "demonstration"
-    assert any("isolated workspace" in l for l in result.limitations)
 
 
 def test_misapplied_method_is_reported_as_failed_not_success(db_session, sample_image):

@@ -13,7 +13,7 @@ class Operation(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
 
-    target_type: Mapped[str] = mapped_column(String(16))  # demo | image | physical
+    target_type: Mapped[str] = mapped_column(String(16))  # image | physical
     target_identifier: Mapped[str] = mapped_column(String(512))
     target_label: Mapped[str] = mapped_column(String(256))
     capacity_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -25,7 +25,7 @@ class Operation(Base):
 
     status: Mapped[str] = mapped_column(String(32), default="pending")
     verification_status: Mapped[str] = mapped_column(String(32), default="not_run")
-    simulation_only: Mapped[bool] = mapped_column(default=True)
+    simulation_only: Mapped[bool] = mapped_column(default=False)
 
     operator_id: Mapped[str] = mapped_column(String(128))
 
@@ -47,7 +47,7 @@ class Certificate(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     operation_id: Mapped[str] = mapped_column(ForeignKey("operations.id"))
 
-    final_status: Mapped[str] = mapped_column(String(32))  # Verified|Failed|Inconclusive|Simulation Only
+    final_status: Mapped[str] = mapped_column(String(32))  # Verified|Failed|Inconclusive
     pdf_path: Mapped[str] = mapped_column(String(512))
     content_hash: Mapped[str] = mapped_column(String(128))
     signature_b64: Mapped[str | None] = mapped_column(Text, nullable=True)

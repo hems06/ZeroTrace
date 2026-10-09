@@ -36,9 +36,8 @@ export default function Dashboard() {
         <StatCard label="Failed" value={summary.failed_count} accent="text-rose-400" />
         <StatCard label="Inconclusive" value={summary.inconclusive_count} accent="text-amber-400" />
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <StatCard label="Image-based tests" value={summary.image_based_operations} />
-        <StatCard label="Demonstration runs" value={summary.demo_operations} />
         <StatCard label="Physical device attempts" value={summary.physical_operations} />
         <StatCard label="Certificates issued" value={summary.total_certificates} />
       </div>
@@ -49,8 +48,7 @@ export default function Dashboard() {
         </div>
         {summary.recent_operations.length === 0 ? (
           <div className="p-6 text-center text-sm text-slate-500">
-            No operations yet. Start one from the "Sanitize" tab — image-based testing works without a
-            physical USB device.
+            No operations yet. Start one from the "Sanitize" tab.
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -69,7 +67,6 @@ export default function Dashboard() {
                   <td className="px-4 py-2 text-slate-300">{op.target_label}</td>
                   <td className="px-4 py-2 text-slate-400">
                     {op.target_type}
-                    {op.simulation_only && <span className="ml-1 text-indigo-400">(sim)</span>}
                   </td>
                   <td className="px-4 py-2">
                     <StatusBadge status={op.status} />

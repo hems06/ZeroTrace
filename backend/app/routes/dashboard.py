@@ -17,7 +17,6 @@ def dashboard_summary(db: Session = Depends(get_db)) -> dict:
         db.query(func.count(Operation.id)).filter(Operation.verification_status == "inconclusive").scalar() or 0
     )
     image_ops = db.query(func.count(Operation.id)).filter(Operation.target_type == "image").scalar() or 0
-    demo_ops = db.query(func.count(Operation.id)).filter(Operation.target_type == "demo").scalar() or 0
     physical_ops = db.query(func.count(Operation.id)).filter(Operation.target_type == "physical").scalar() or 0
     total_certificates = db.query(func.count(Certificate.id)).scalar() or 0
     total_audit_events = db.query(func.count(AuditEvent.seq)).scalar() or 0
@@ -35,7 +34,6 @@ def dashboard_summary(db: Session = Depends(get_db)) -> dict:
         "failed_count": failed,
         "inconclusive_count": inconclusive,
         "image_based_operations": image_ops,
-        "demo_operations": demo_ops,
         "physical_operations": physical_ops,
         "total_certificates": total_certificates,
         "total_audit_events": total_audit_events,

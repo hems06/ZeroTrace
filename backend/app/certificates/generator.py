@@ -30,7 +30,7 @@ def determine_final_status(operation: Operation) -> str:
     if operation.status in ("blocked_safety_disabled", "blocked_not_implemented", "failed"):
         return "Failed"
     if operation.verification_status == "verified":
-        return "Simulation Only" if operation.simulation_only else "Verified"
+        return "Verified"
     if operation.verification_status == "inconclusive":
         return "Inconclusive"
     if operation.verification_status == "failed":
@@ -85,7 +85,6 @@ def _build_pdf(path, payload: dict, signature_b64: str, content_hash: str, finge
 
     status_hex = {
         "Verified": "#1b7f3d",
-        "Simulation Only": "#8a6d00",
         "Failed": "#b31212",
         "Inconclusive": "#b31212",
     }.get(payload["final_status"], "#000000")
@@ -95,14 +94,6 @@ def _build_pdf(path, payload: dict, signature_b64: str, content_hash: str, finge
             ParagraphStyle("Status", parent=styles["Heading1"], fontSize=16),
         )
     )
-    if payload["final_status"] == "Simulation Only":
-        flow.append(
-            Paragraph(
-                "This certificate documents a DEMONSTRATION-MODE operation on synthetic "
-                "test data in an isolated workspace. No physical storage device was wiped.",
-                normal,
-            )
-        )
     flow.append(Spacer(1, 8))
 
     def kv_table(rows):
@@ -145,7 +136,6 @@ def _build_pdf(path, payload: dict, signature_b64: str, content_hash: str, finge
                 ["Started at (UTC)", str(payload["started_at"])],
                 ["Completed at (UTC)", str(payload["completed_at"])],
                 ["Operator", payload["operator_id"]],
-                ["Simulation only", str(payload["simulation_only"])],
             ]
         )
     )

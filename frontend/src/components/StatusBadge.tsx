@@ -11,7 +11,6 @@ const STYLES: Record<string, string> = {
   pending: "bg-slate-800 text-slate-400 border-slate-600",
   blocked_safety_disabled: "bg-amber-900/40 text-amber-300 border-amber-700",
   blocked_not_implemented: "bg-amber-900/40 text-amber-300 border-amber-700",
-  "Simulation Only": "bg-indigo-900/40 text-indigo-300 border-indigo-700",
 };
 
 export default function StatusBadge({ status }: { status: string }) {

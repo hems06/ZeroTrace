@@ -33,7 +33,7 @@ export interface SanitizationMethod {
   limitations: string;
 }
 
-export type TargetType = "demo" | "image" | "physical";
+export type TargetType = "image" | "physical";
 
 export interface Operation {
   id: string;
@@ -47,7 +47,6 @@ export interface Operation {
   policy_reference: string;
   status: string;
   verification_status: string;
-  simulation_only: boolean;
   operator_id: string;
   started_at: string | null;
   completed_at: string | null;
@@ -101,7 +100,6 @@ export interface DashboardSummary {
   failed_count: number;
   inconclusive_count: number;
   image_based_operations: number;
-  demo_operations: number;
   physical_operations: number;
   total_certificates: number;
   total_audit_events: number;
@@ -111,7 +109,6 @@ export interface DashboardSummary {
     target_label: string;
     status: string;
     verification_status: string;
-    simulation_only: boolean;
     created_at: string;
   }[];
 }

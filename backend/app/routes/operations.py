@@ -44,14 +44,7 @@ def create_operation(
 
     operation_id = new_id("OP")
 
-    if payload.target_type == "demo":
-        target_identifier = "synthetic-demo-dataset"
-        target_label = "Synthetic demo dataset (isolated workspace)"
-        capacity_bytes = payload.capacity_bytes or (4 * 1024 * 1024)
-        media_type = "demo-synthetic"
-        evidence_seed: dict = {}
-
-    elif payload.target_type == "image":
+    if payload.target_type == "image":
         try:
             image = image_lib.resolve_image(payload.target_identifier)
         except image_lib.InvalidImageReference as exc:
@@ -101,7 +94,7 @@ def create_operation(
         policy_reference=method.policy_reference,
         status="pending",
         verification_status="not_run",
-        simulation_only=payload.target_type == "demo",
+        simulation_only=False,
         operator_id=operator_id,
         evidence=evidence_seed,
         errors=[],

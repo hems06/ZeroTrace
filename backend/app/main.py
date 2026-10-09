@@ -8,15 +8,13 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import FRONTEND_DIST_DIR, settings
 from app.database import init_db
-from app.devices.bootstrap import ensure_sample_image
 from app.routes import audit, certificates, dashboard, devices, health, operations
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Never triggers any sanitization -- only ensures tables/dirs/demo data exist.
+    # Never triggers any sanitization -- only ensures tables/dirs exist.
     init_db()
-    ensure_sample_image()
     yield
 
 

@@ -64,7 +64,7 @@ def build_synthetic_file(out_path: Path, size_bytes: int) -> dict:
 
     return {
         "description": "Synthetic demo dataset. Contains no real sensitive data.",
-        "media_type_label": "demo-disk-image",
+        "media_type_label": "disk-image",
         "size_bytes": size_bytes,
         "original_sha256": sha256.hexdigest(),
         "markers": markers_meta,

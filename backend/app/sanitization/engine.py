@@ -1,6 +1,6 @@
 """Sanitization engine orchestrator.
 
-Dispatches an Operation to the demo, image-based, or physical-device
+Dispatches an Operation to the image-based or physical-device
 execution path based on its target_type, and always runs the verification
 engine afterward. Every path records evidence on the Operation row and
 audit events; nothing here silently claims success.
@@ -16,7 +16,6 @@ from app.audit.ledger import append_event
 from app.config import settings
 from app.devices import images as image_lib
 from app.devices.discovery import discover_physical_devices, is_known_device_id
-from app.devices.synthetic import build_synthetic_file
 from app.models import Operation
 from app.sanitization.overwrite import overwrite_file_passes
 from app.sanitization.physical import (
@@ -28,7 +27,6 @@ from app.sanitization.physical import (
     verify_device_zeroed,
 )
 from app.sanitization.policy import get_method
-from app.utils.hashing import sha256_file
 from app.verification.verifier import verify_image_operation
 
 REQUIRED_PHYSICAL_PHRASE = "I UNDERSTAND DATA WILL BECOME IRRECOVERABLE"
@@ -45,9 +43,7 @@ def run_operation(db: Session, operation: Operation) -> Operation:
     append_event(db, "sanitization_started", operation.id, {"method": operation.method})
 
     try:
-        if operation.target_type == "demo":
-            _run_demo(db, operation)
-        elif operation.target_type == "image":
+        if operation.target_type == "image":
             _run_image(db, operation)
         elif operation.target_type == "physical":
             _run_physical(db, operation)
@@ -71,64 +67,6 @@ def run_operation(db: Session, operation: Operation) -> Operation:
         {"status": operation.status, "verification_status": operation.verification_status},
     )
     return operation
-
-
-def _run_demo(db: Session, operation: Operation) -> None:
-    method = get_method(operation.method)
-    workspace = settings.workspace_dir / f"demo_{operation.id}"
-    workspace.mkdir(parents=True, exist_ok=True)
-    dataset_path = workspace / "synthetic_dataset.bin"
-
-    size_bytes = operation.capacity_bytes or (4 * 1024 * 1024)
-    manifest = build_synthetic_file(dataset_path, size_bytes)
-    pre_hash = manifest["original_sha256"]
-    markers_before = len(manifest["markers"])
-
-    pass_records = overwrite_file_passes(dataset_path, method.passes)
-    post_hash = sha256_file(dataset_path)
-
-    from app.verification.verifier import count_markers_present
-
-    try:
-        markers_after = count_markers_present(dataset_path, manifest["markers"])
-    except ValueError:
-        markers_after = -1
-
-    hash_changed = post_hash != pre_hash
-    if markers_after == 0 and hash_changed:
-        verification_status = "verified"
-    elif markers_after > 0:
-        verification_status = "failed"
-    else:
-        verification_status = "inconclusive"
-
-    operation.simulation_only = True
-    operation.status = "completed"
-    operation.verification_status = verification_status
-    operation.evidence = {
-        **operation.evidence,
-        "mode": "demonstration",
-        "dataset_size_bytes": size_bytes,
-        "pre_hash": pre_hash,
-        "post_hash": post_hash,
-        "hash_changed": hash_changed,
-        "markers_found_before": markers_before,
-        "markers_found_after": max(markers_after, 0),
-        "overwrite_passes": pass_records,
-    }
-    operation.limitations = [
-        *operation.limitations,
-        "Demonstration mode operates only on a generated synthetic dataset in an "
-        "isolated workspace. No real device or file was touched.",
-    ]
-    db.commit()
-
-    # Clean up the synthetic workspace -- it was never real data to retain.
-    try:
-        dataset_path.unlink(missing_ok=True)
-        workspace.rmdir()
-    except OSError:
-        pass
 
 
 def _run_image(db: Session, operation: Operation) -> None:

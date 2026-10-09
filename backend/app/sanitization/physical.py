@@ -51,16 +51,18 @@ def _unmount_windows(mount_points: list[str], disk_index: int | None) -> list[st
                 warnings.append(f"Failed to remove drive letter {letter}: {exc}")
         return warnings
 
-    # Preferred: take the entire disk offline
-    script = f"select disk {disk_index}\noffline disk\nattributes disk clear readonly\n"
+    # Preferred: keep the disk ONLINE and remove its volumes with 'clean'.
+    # An offline disk (or one with mounted volumes) rejects raw writes: Windows
+    # returns access denied, which the C runtime surfaces as EBADF.
+    script = f"select disk {disk_index}\nattributes disk clear readonly\nonline disk\nclean\n"
     try:
         result = subprocess.run(
             ["diskpart"],
             input=script,
             capture_output=True, text=True, timeout=30,
         )
-        if result.returncode != 0:
-            warnings.append(f"diskpart offline disk {disk_index} returned {result.returncode}: {result.stderr.strip()[:200]}")
+        if result.returncode != 0 or "succeeded in cleaning" not in result.stdout.lower():
+            warnings.append(f"diskpart clean disk {disk_index} failed ({result.returncode}): {(result.stdout + result.stderr).strip()[-300:]}")
     except Exception as exc:
         warnings.append(f"Failed to offline disk {disk_index}: {exc}")
     return warnings
