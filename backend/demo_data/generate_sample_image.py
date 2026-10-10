@@ -53,19 +53,26 @@ def parse_size(text: str) -> int:
     return size
 
 
-def _default_name(size_bytes: int) -> str:
-    """Produce a stable, readable filename for a given size."""
+def _human(size_bytes: int) -> str:
     if size_bytes >= _UNIT_BYTES["gb"] and size_bytes % _UNIT_BYTES["gb"] == 0:
-        return f"sample_disk_{size_bytes // _UNIT_BYTES['gb']}gb.img"
-    return f"sample_disk_{size_bytes // _UNIT_BYTES['mb']}mb.img"
+        return f"{size_bytes // _UNIT_BYTES['gb']}gb"
+    return f"{size_bytes // _UNIT_BYTES['mb']}mb"
 
 
-def generate(out_path: Path, size_bytes: int) -> None:
-    manifest = build_synthetic_file(out_path, size_bytes)
+def _default_name(size_bytes: int, data_bytes: int | None = None) -> str:
+    """Produce a stable, readable filename for a given size."""
+    if data_bytes is not None and data_bytes < size_bytes:
+        return f"sample_disk_{_human(size_bytes)}_{_human(data_bytes)}data.img"
+    return f"sample_disk_{_human(size_bytes)}.img"
+
+
+def generate(out_path: Path, size_bytes: int, data_bytes: int | None = None) -> None:
+    manifest = build_synthetic_file(out_path, size_bytes, data_bytes)
     manifest_path = out_path.with_suffix(out_path.suffix + ".manifest.json")
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     print(f"Created sample image: {out_path} ({manifest['size_bytes']:,} bytes)")
+    print(f"  Data region: {manifest['data_bytes']:,} bytes (sparse tail: {manifest['sparse']})")
     print(f"  SHA-256: {manifest['original_sha256']}")
     print(f"  Markers embedded: {len(manifest['markers'])}")
     print(f"  Manifest: {manifest_path}")
@@ -74,8 +81,14 @@ def generate(out_path: Path, size_bytes: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default=None, help="Output path (defaults to a size-derived name under images_dir).")
-    parser.add_argument("--size", type=parse_size, default=None, help="Image size, e.g. '30mb', '1gb', '2gb'.")
+    parser.add_argument("--size", type=parse_size, default=None, help="Image size, e.g. '30mb', '1gb', '2gb', '32gb'.")
     parser.add_argument("--size-mb", type=int, default=None, help="Image size in megabytes (legacy).")
+    parser.add_argument(
+        "--data",
+        type=parse_size,
+        default=None,
+        help="Bytes of real data to write (e.g. '500mb'); the rest of --size is a sparse zero tail.",
+    )
     parser.add_argument(
         "--standard-set",
         action="store_true",
@@ -86,8 +99,8 @@ def main() -> None:
     settings.images_dir.mkdir(parents=True, exist_ok=True)
 
     if args.standard_set:
-        if args.out:
-            parser.error("--out cannot be combined with --standard-set.")
+        if args.out or args.data is not None:
+            parser.error("--out / --data cannot be combined with --standard-set.")
         for spec in STANDARD_SET:
             size_bytes = parse_size(spec)
             generate(settings.images_dir / _default_name(size_bytes), size_bytes)
@@ -103,8 +116,12 @@ def main() -> None:
     else:
         size_bytes = 8 * _UNIT_BYTES["mb"]  # back-compatible default
 
-    out_path = Path(args.out) if args.out else settings.images_dir / _default_name(size_bytes)
-    generate(out_path, size_bytes)
+    data_bytes = args.data
+    if data_bytes is not None and data_bytes > size_bytes:
+        parser.error(f"--data ({data_bytes} bytes) cannot exceed --size ({size_bytes} bytes).")
+
+    out_path = Path(args.out) if args.out else settings.images_dir / _default_name(size_bytes, data_bytes)
+    generate(out_path, size_bytes, data_bytes)
 
 
 if __name__ == "__main__":
