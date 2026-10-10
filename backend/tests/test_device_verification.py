@@ -320,7 +320,7 @@ def physical_env(monkeypatch):
     monkeypatch.setattr(engine_module, "_online_disk_windows", lambda idx: [])
     calls = {"overwrite": 0, "sampled": 0, "full": 0}
 
-    def fake_overwrite(device_id, capacity_bytes, passes):
+    def fake_overwrite(device_id, capacity_bytes, passes, progress_cb=None):
         calls["overwrite"] += 1
         return [{"pass": p, "bytes_written": capacity_bytes} for p in passes]
 
@@ -347,7 +347,20 @@ def _rec(method, status, **extra):
     return base
 
 
+class _Finished:
+    """Response-like wrapper exposing the operation's final (polled) body."""
+
+    def __init__(self, status_code: int, body: dict):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> dict:
+        return self._body
+
+
 def _post(client, headers, **over):
+    import time
+
     body = {
         "target_type": "physical",
         "target_identifier": "/dev/fake9",
@@ -356,7 +369,19 @@ def _post(client, headers, **over):
         "confirm_phrase": REQUIRED_PHYSICAL_PHRASE,
     }
     body.update(over)
-    return client.post("/api/operations", json=body, headers=headers)
+    r = client.post("/api/operations", json=body, headers=headers)
+    if r.status_code != 201:
+        return r
+    # Operations now run on a background thread; poll until terminal.
+    op_id = r.json()["id"]
+    deadline = time.time() + 15.0
+    final = r.json()
+    while time.time() < deadline:
+        final = client.get(f"/api/operations/{op_id}", headers=headers).json()
+        if final.get("status") in ("completed", "failed"):
+            break
+        time.sleep(0.02)
+    return _Finished(r.status_code, final)
 
 
 def test_default_is_sampled_and_records_structured_evidence(client, auth_headers, monkeypatch, physical_env):
@@ -487,7 +512,7 @@ def test_engine_sizes_overwrite_and_verification_from_measured_length(client, au
     measured = CAP + 8 * MIB
     seen = {}
 
-    def fake_overwrite(device_id, capacity_bytes, passes):
+    def fake_overwrite(device_id, capacity_bytes, passes, progress_cb=None):
         seen["overwrite_cap"] = capacity_bytes
         return [{"pass": p, "bytes_written": capacity_bytes} for p in passes]
 

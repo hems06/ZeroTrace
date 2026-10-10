@@ -192,8 +192,8 @@ def test_partial_physical_wipe_is_failed_never_verified(client, auth_headers, mo
     disk = FakeDisk(cap, fail_at=MIB, close_error=True)
     real_overwrite = physical.overwrite_device_passes
     monkeypatch.setattr(engine_module, "overwrite_device_passes",
-                        lambda device_id, capacity_bytes, passes:
-                        real_overwrite(device_id, capacity_bytes, passes, _open=disk.opener))
+                        lambda device_id, capacity_bytes, passes, progress_cb=None:
+                        real_overwrite(device_id, capacity_bytes, passes, _open=disk.opener, progress_cb=progress_cb))
 
     def no_verification(*args, **kwargs):
         raise AssertionError("verification must not run after a failed overwrite")
@@ -206,8 +206,16 @@ def test_partial_physical_wipe_is_failed_never_verified(client, auth_headers, mo
         "method": "purge-three-pass-overwrite", "acknowledge_irrecoverable": True,
         "confirm_phrase": REQUIRED_PHYSICAL_PHRASE,
     }, headers=auth_headers)
-    body = r.json()
     assert r.status_code == 201
+    import time
+    op_id = r.json()["id"]
+    deadline = time.time() + 15.0
+    body = r.json()
+    while time.time() < deadline:
+        body = client.get(f"/api/operations/{op_id}", headers=auth_headers).json()
+        if body.get("status") in ("completed", "failed"):
+            break
+        time.sleep(0.02)
     assert body["status"] == "failed"
     assert body["verification_status"] == "not_run"
     assert "overwrite_passes" not in body["evidence"]

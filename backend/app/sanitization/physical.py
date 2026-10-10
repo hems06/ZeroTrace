@@ -219,6 +219,7 @@ def overwrite_device_passes(
     capacity_bytes: int | None,
     passes: list[str],
     _open=open,
+    progress_cb=None,
 ) -> list[dict]:
     """Apply overwrite passes directly to a raw block device.
 
@@ -235,8 +236,11 @@ def overwrite_device_passes(
     Returns a list of {pass, bytes_written} records.
     """
     records: list[dict] = []
+    pass_total = len(passes)
 
-    for kind in passes:
+    for index, kind in enumerate(passes, start=1):
+        if progress_cb is not None:
+            progress_cb(index, pass_total, kind, 0, capacity_bytes)
         if kind == "zero":
             fill: bytes | None = b"\x00"
         elif kind == "one":
@@ -288,6 +292,8 @@ def overwrite_device_passes(
                             f"Device accepted no data during {kind} pass at offset {written}."
                         )
                     written += bytes_out
+                    if progress_cb is not None:
+                        progress_cb(index, pass_total, kind, written, capacity_bytes)
                 try:
                     os.fsync(f.fileno())
                 except OSError:

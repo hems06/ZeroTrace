@@ -32,6 +32,32 @@ from app.main import app  # noqa: E402
 init_db()
 
 
+@pytest.fixture(autouse=True)
+def _drain_operations():
+    """Operations now execute on a background thread sharing this one DB file.
+    Wait for any still-running wipe to finish after each test so threads never
+    outlive their test and contaminate the next one's view of the DB."""
+    import time
+
+    from app.models import Operation
+
+    yield
+    deadline = time.time() + 20.0
+    while time.time() < deadline:
+        session = SessionLocal()
+        try:
+            pending = (
+                session.query(Operation)
+                .filter(Operation.status.in_(("pending", "running")))
+                .count()
+            )
+        finally:
+            session.close()
+        if pending == 0:
+            return
+        time.sleep(0.02)
+
+
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app)

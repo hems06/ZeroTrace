@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.audit.ledger import append_event
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.devices import images as image_lib
 from app.devices.discovery import discover_physical_devices
 from app.models import Operation
@@ -15,6 +17,23 @@ from app.security import require_operator
 from app.utils.hashing import new_id
 
 router = APIRouter(prefix="/api/operations", tags=["operations"])
+
+
+def _execute_operation_async(operation_id: str) -> None:
+    """Run the sanitization on a background thread with its own DB session.
+
+    The wipe can take a while (seconds to many minutes), so the HTTP request
+    returns immediately with a 'pending' operation and clients poll
+    GET /api/operations/{id} to watch status + progress and estimate the time
+    remaining.
+    """
+    session = SessionLocal()
+    try:
+        operation = session.get(Operation, operation_id)
+        if operation is not None:
+            run_operation(session, operation)
+    finally:
+        session.close()
 
 
 @router.get("", response_model=list[OperationOut])
@@ -116,7 +135,8 @@ def create_operation(
     append_event(db, "target_selected", operation.id, {"target_type": payload.target_type, "target_identifier": target_identifier})
     append_event(db, "operator_confirmation_completed", operation.id, {"operator_id": operator_id})
 
-    run_operation(db, operation)
+    # Execute asynchronously so the wipe's progress can be polled while it runs.
+    threading.Thread(target=_execute_operation_async, args=(operation.id,), daemon=True).start()
     return OperationOut.model_validate(operation)
 
 

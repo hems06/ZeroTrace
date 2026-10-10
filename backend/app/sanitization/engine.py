@@ -7,6 +7,7 @@ audit events; nothing here silently claims success.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -36,6 +37,47 @@ REQUIRED_PHYSICAL_PHRASE = "I UNDERSTAND DATA WILL BECOME IRRECOVERABLE"
 
 class OperationError(Exception):
     pass
+
+
+def _make_progress_reporter(db: Session, operation: Operation, min_interval: float = 0.4):
+    """Build a progress callback for the overwrite primitives.
+
+    It records cumulative progress across all passes onto the operation's
+    evidence (so a polling client can show a progress bar and estimate the
+    time remaining) and commits it, throttled to ``min_interval`` seconds plus
+    every pass boundary. It never influences the wipe itself.
+    """
+    state = {"last": 0.0}
+
+    def report(pass_index: int, pass_total: int, kind: str, pass_done: int, pass_bytes: int | None) -> None:
+        if pass_bytes:
+            total: int | None = pass_bytes * pass_total
+            done: int | None = (pass_index - 1) * pass_bytes + pass_done
+            percent = round(min(done / total, 1.0) * 100, 1) if total else None
+        else:
+            total = done = percent = None
+
+        at_boundary = pass_done == 0 or (pass_bytes is not None and pass_done >= pass_bytes)
+        now = time.monotonic()
+        if not at_boundary and now - state["last"] < min_interval:
+            return
+        state["last"] = now
+
+        operation.evidence = {
+            **operation.evidence,
+            "progress": {
+                "pass_index": pass_index,
+                "pass_total": pass_total,
+                "current_pass": kind,
+                "bytes_done": done,
+                "bytes_total": total,
+                "percent": percent,
+                "updated_at": datetime.utcnow().isoformat(),
+            },
+        }
+        db.commit()
+
+    return report
 
 
 def run_operation(db: Session, operation: Operation) -> Operation:
@@ -98,7 +140,9 @@ def _run_image(db: Session, operation: Operation) -> None:
         {"working_copy": str(working_copy), "original_sha256": image.sha256},
     )
 
-    pass_records = overwrite_file_passes(working_copy, method.passes)
+    pass_records = overwrite_file_passes(
+        working_copy, method.passes, progress_cb=_make_progress_reporter(db, operation)
+    )
 
     result = verify_image_operation(
         working_copy_path=working_copy,
@@ -245,6 +289,7 @@ def _run_physical(db: Session, operation: Operation) -> None:
             device_id=device_id,
             capacity_bytes=io_capacity,
             passes=method.passes,
+            progress_cb=_make_progress_reporter(db, operation),
         )
     except PhysicalWipeError as exc:
         # Bring disk back online before raising

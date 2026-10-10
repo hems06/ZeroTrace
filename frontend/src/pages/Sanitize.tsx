@@ -92,14 +92,15 @@ export default function Sanitize() {
     ((targetType === "image" && selectedImage) ||
       (targetType === "physical" && selectedDevice && acknowledge && confirmPhrase === REQUIRED_PHRASE));
 
-  // Live stopwatch while an operation request is in flight. The authoritative
-  // wipe duration comes back from the server on the result (duration_seconds);
-  // this only reflects client-perceived elapsed time during the call.
+  const isRunning = !!result && (result.status === "running" || result.status === "pending");
+
+  // Tick a clock while the request is in flight OR the wipe is running on the
+  // server, so the elapsed timer and the estimated time-remaining update live.
   useEffect(() => {
-    if (!busy || execStartedAt == null) return;
-    const t = setInterval(() => setNowMs(Date.now()), 100);
+    if (!busy && !isRunning) return;
+    const t = setInterval(() => setNowMs(Date.now()), 250);
     return () => clearInterval(t);
-  }, [busy, execStartedAt]);
+  }, [busy, isRunning]);
 
   const execute = async () => {
     setExecStartedAt(Date.now());
@@ -148,9 +149,23 @@ export default function Sanitize() {
       } catch (e) {
         console.error("Polling error:", e);
       }
-    }, 2000);
+    }, 1000);
     return () => clearInterval(interval);
   }, [result]);
+
+  // Parse a server UTC timestamp (pydantic emits naive UTC without a 'Z').
+  const parseUtc = (s: string) => Date.parse(/([zZ]|[+-]\d\d:?\d\d)$/.test(s) ? s : s + "Z");
+
+  const progress = result?.evidence?.progress as
+    | { percent?: number; bytes_done?: number; bytes_total?: number; pass_index?: number; pass_total?: number; current_pass?: string }
+    | undefined;
+
+  const serverElapsed = result?.started_at ? Math.max(0, (nowMs - parseUtc(result.started_at)) / 1000) : 0;
+  let etaSeconds: number | null = null;
+  if (isRunning && progress?.bytes_done && progress?.bytes_total && serverElapsed > 0.5) {
+    const rate = progress.bytes_done / serverElapsed; // bytes/sec observed so far
+    if (rate > 0) etaSeconds = Math.max(0, (progress.bytes_total - progress.bytes_done) / rate);
+  }
 
   return (
     <div className="space-y-6">
@@ -355,12 +370,39 @@ export default function Sanitize() {
             <h2 className="text-sm font-semibold text-slate-200">Outcome</h2>
             <StatusBadge status={result.status} />
             <StatusBadge status={result.verification_status} />
-            {result.duration_seconds != null && (
+            {!isRunning && result.duration_seconds != null && (
               <span className="ml-auto font-mono text-xs tabular-nums text-slate-400">
                 ⏱ {formatSeconds(result.duration_seconds)}
               </span>
             )}
           </div>
+
+          {isRunning && (
+            <div className="mb-4 rounded-lg border border-trust-800 bg-trust-950/30 p-3">
+              <div className="mb-1.5 flex items-center justify-between text-xs text-slate-300">
+                <span>
+                  Wiping
+                  {progress?.pass_index != null && progress?.pass_total != null && (
+                    <> · pass {progress.pass_index}/{progress.pass_total}
+                      {progress.current_pass ? ` (${progress.current_pass})` : ""}</>
+                  )}
+                </span>
+                <span className="font-mono tabular-nums text-trust-300">
+                  ⏱ {formatSeconds(serverElapsed)}
+                  {etaSeconds != null ? <> · ~{formatSeconds(etaSeconds)} left</> : <> · estimating…</>}
+                </span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-trust-500 transition-[width] duration-300"
+                  style={{ width: `${Math.min(100, Math.max(2, progress?.percent ?? 0))}%` }}
+                />
+              </div>
+              <div className="mt-1 text-right font-mono text-[11px] tabular-nums text-slate-500">
+                {progress?.percent != null ? `${progress.percent.toFixed(1)}%` : "starting…"}
+              </div>
+            </div>
+          )}
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <div className="mb-1 text-xs font-semibold uppercase text-slate-500">Evidence</div>
@@ -401,7 +443,9 @@ export default function Sanitize() {
           </div>
 
           <div className="mt-4 border-t border-slate-800 pt-4">
-            {!certificate ? (
+            {isRunning ? (
+              <span className="text-sm text-slate-500">Certificate available once the wipe completes…</span>
+            ) : !certificate ? (
               <button
                 onClick={generateCertificate}
                 disabled={busy}

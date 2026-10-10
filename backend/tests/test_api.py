@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import app.routes.operations as operations_route
 import app.sanitization.engine as engine_module
 from app.devices.discovery import PhysicalDevice
@@ -9,6 +11,19 @@ from app.sanitization.engine import REQUIRED_PHYSICAL_PHRASE
 def _patch_devices(monkeypatch, devices: list[PhysicalDevice]) -> None:
     monkeypatch.setattr(operations_route, "discover_physical_devices", lambda: devices)
     monkeypatch.setattr(engine_module, "discover_physical_devices", lambda: devices)
+
+
+def _wait_for_terminal(client, headers, op_id: str, timeout: float = 15.0) -> dict:
+    """Operations now run on a background thread and the POST returns a
+    'pending' operation; poll until it reaches a terminal state."""
+    deadline = time.time() + timeout
+    body: dict = {}
+    while time.time() < deadline:
+        body = client.get(f"/api/operations/{op_id}", headers=headers).json()
+        if body.get("status") in ("completed", "failed"):
+            return body
+        time.sleep(0.02)
+    raise AssertionError(f"operation {op_id} did not finish in time: {body}")
 
 
 def test_health(client):
@@ -72,7 +87,7 @@ def test_image_operation_end_to_end_via_api(client, auth_headers, sample_image):
         headers=auth_headers,
     )
     assert r.status_code == 201
-    body = r.json()
+    body = _wait_for_terminal(client, auth_headers, r.json()["id"])
     assert body["status"] == "completed"
     assert body["simulation_only"] is False
 
@@ -95,7 +110,7 @@ def test_image_operation_end_to_end_via_api(client, auth_headers, sample_image):
         headers=auth_headers,
     )
     assert r.status_code == 201
-    body = r.json()
+    body = _wait_for_terminal(client, auth_headers, r.json()["id"])
     assert body["status"] == "completed"
     assert body["verification_status"] == "verified"
     assert body["simulation_only"] is False
@@ -150,7 +165,7 @@ def test_physical_operation_rejects_system_disk(client, auth_headers, monkeypatc
         headers=auth_headers,
     )
     assert r.status_code == 201  # operation is recorded...
-    body = r.json()
+    body = _wait_for_terminal(client, auth_headers, r.json()["id"])
     assert body["status"] == "failed"  # ...but never executed
     assert "system/OS disk" in body["errors"][0]
 
@@ -167,7 +182,7 @@ def test_interrupted_operation_reports_failure_not_false_success(client, auth_he
         headers=auth_headers,
     )
     assert r.status_code == 201
-    body = r.json()
+    body = _wait_for_terminal(client, auth_headers, r.json()["id"])
     assert body["status"] == "failed"
     assert "simulated disk I/O interruption" in body["errors"][0]
     assert body["verification_status"] == "not_run"
@@ -196,6 +211,7 @@ def test_reverify_endpoint_requires_finished_operation(client, auth_headers, sam
         headers=auth_headers,
     )
     op_id = r.json()["id"]
+    _wait_for_terminal(client, auth_headers, op_id)
     verify_r = client.post(f"/api/operations/{op_id}/verify", headers=auth_headers)
     assert verify_r.status_code == 200
 
