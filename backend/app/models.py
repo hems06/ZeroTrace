@@ -40,6 +40,19 @@ class Operation(Base):
 
     certificates: Mapped[list["Certificate"]] = relationship(back_populates="operation")
 
+    @property
+    def duration_seconds(self) -> float | None:
+        """Elapsed wall-clock time of the operation.
+
+        Measured from ``started_at`` to ``completed_at`` once the operation
+        has finished, or to the present moment while it is still running.
+        ``None`` until the operation has actually started.
+        """
+        if self.started_at is None:
+            return None
+        end = self.completed_at or datetime.utcnow()
+        return round((end - self.started_at).total_seconds(), 3)
+
 
 class Certificate(Base):
     __tablename__ = "certificates"

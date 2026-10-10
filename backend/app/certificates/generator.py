@@ -27,6 +27,21 @@ APP_NAME = settings.app_name
 APP_VERSION = settings.app_version
 
 
+def _format_duration(seconds: float | None) -> str:
+    """Human-readable elapsed time for display on the certificate."""
+    if seconds is None:
+        return "unknown"
+    if seconds < 1:
+        return f"{seconds * 1000:.0f} ms"
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    if minutes < 60:
+        return f"{minutes} min {secs} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} min {secs} s"
+
+
 def determine_final_status(operation: Operation) -> str:
     if operation.status in ("blocked_safety_disabled", "blocked_not_implemented", "failed"):
         return "Failed"
@@ -55,6 +70,7 @@ def _canonical_payload(operation: Operation, certificate_id: str, final_status: 
         "policy_reference": operation.policy_reference,
         "started_at": operation.started_at.isoformat() if operation.started_at else None,
         "completed_at": operation.completed_at.isoformat() if operation.completed_at else None,
+        "duration_seconds": operation.duration_seconds,
         "operator_id": operation.operator_id,
         "evidence": operation.evidence,
         "errors": operation.errors,
@@ -140,6 +156,7 @@ def _build_pdf(path, payload: dict, signature_b64: str, content_hash: str, finge
                 ["Policy reference", payload["policy_reference"]],
                 ["Started at (UTC)", str(payload["started_at"])],
                 ["Completed at (UTC)", str(payload["completed_at"])],
+                ["Duration", _format_duration(payload.get("duration_seconds"))],
                 ["Operator", payload["operator_id"]],
             ]
         )

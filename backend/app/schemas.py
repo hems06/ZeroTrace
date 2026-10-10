@@ -76,6 +76,7 @@ class OperationOut(BaseModel):
     operator_id: str
     started_at: datetime | None
     completed_at: datetime | None
+    duration_seconds: float | None = None
     created_at: datetime
     evidence: dict[str, Any]
     errors: list[Any]

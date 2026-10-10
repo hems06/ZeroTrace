@@ -53,6 +53,7 @@ export interface Operation {
   operator_id: string;
   started_at: string | null;
   completed_at: string | null;
+  duration_seconds: number | null;
   created_at: string;
   evidence: Record<string, unknown>;
   errors: string[];

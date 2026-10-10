@@ -27,6 +27,16 @@ function formatBytes(n: number | null): string {
   return `${v.toFixed(1)} ${units[i]}`;
 }
 
+function formatSeconds(s: number): string {
+  if (s < 1) return `${(s * 1000).toFixed(0)} ms`;
+  if (s < 60) return `${s.toFixed(1)} s`;
+  const mins = Math.floor(s / 60);
+  const secs = Math.round(s % 60);
+  if (mins < 60) return `${mins} min ${secs} s`;
+  const hours = Math.floor(mins / 60);
+  return `${hours} h ${mins % 60} min ${secs} s`;
+}
+
 export default function Sanitize() {
   const [devices, setDevices] = useState<DevicesResponse | null>(null);
   const [methods, setMethods] = useState<SanitizationMethod[]>([]);
@@ -39,6 +49,8 @@ export default function Sanitize() {
   const [verificationMode, setVerificationMode] = useState<VerificationMode>("sampled");
   const [readbackSeconds, setReadbackSeconds] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [execStartedAt, setExecStartedAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Operation | null>(null);
   const [certificate, setCertificate] = useState<Certificate | null>(null);
@@ -80,7 +92,18 @@ export default function Sanitize() {
     ((targetType === "image" && selectedImage) ||
       (targetType === "physical" && selectedDevice && acknowledge && confirmPhrase === REQUIRED_PHRASE));
 
+  // Live stopwatch while an operation request is in flight. The authoritative
+  // wipe duration comes back from the server on the result (duration_seconds);
+  // this only reflects client-perceived elapsed time during the call.
+  useEffect(() => {
+    if (!busy || execStartedAt == null) return;
+    const t = setInterval(() => setNowMs(Date.now()), 100);
+    return () => clearInterval(t);
+  }, [busy, execStartedAt]);
+
   const execute = async () => {
+    setExecStartedAt(Date.now());
+    setNowMs(Date.now());
     setBusy(true);
     resetOutcome();
     try {
@@ -164,9 +187,9 @@ export default function Sanitize() {
             ))}
             {devices?.image_targets.length === 0 && (
               <div className="rounded border border-dashed border-slate-700 p-4 text-center text-sm text-slate-500">
-                No image targets found. Generate one with{" "}
-                <code className="text-slate-300">python demo_data/generate_sample_image.py</code> under
-                backend/instance/images, then re-run discovery.
+                No image targets found. Generate the standard 30 MB / 1 GB / 2 GB set with{" "}
+                <code className="text-slate-300">python demo_data/generate_sample_image.py --standard-set</code>{" "}
+                (or a single size, e.g. <code className="text-slate-300">--size 30mb</code>), then re-run discovery.
               </div>
             )}
             <div className="grid gap-2 md:grid-cols-2">
@@ -309,13 +332,20 @@ export default function Sanitize() {
             </label>
           </div>
         )}
-        <button
-          disabled={!canExecute || busy}
-          onClick={execute}
-          className="rounded-md bg-trust-700 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-trust-600"
-        >
-          {busy ? "Working…" : "Execute operation"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            disabled={!canExecute || busy}
+            onClick={execute}
+            className="rounded-md bg-trust-700 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-trust-600"
+          >
+            {busy ? "Working…" : "Execute operation"}
+          </button>
+          {busy && execStartedAt != null && (
+            <span className="font-mono text-sm tabular-nums text-trust-300">
+              ⏱ {formatSeconds((nowMs - execStartedAt) / 1000)}
+            </span>
+          )}
+        </div>
         {error && <div className="mt-3 rounded bg-rose-950/40 px-3 py-2 text-sm text-rose-300">{error}</div>}
       </div>
 
@@ -325,6 +355,11 @@ export default function Sanitize() {
             <h2 className="text-sm font-semibold text-slate-200">Outcome</h2>
             <StatusBadge status={result.status} />
             <StatusBadge status={result.verification_status} />
+            {result.duration_seconds != null && (
+              <span className="ml-auto font-mono text-xs tabular-nums text-slate-400">
+                ⏱ {formatSeconds(result.duration_seconds)}
+              </span>
+            )}
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div>

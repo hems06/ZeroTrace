@@ -18,11 +18,21 @@ SYNTHETIC_MARKERS = [
 ]
 
 
+# 1 MiB fill writes keep multi-gigabyte image generation reasonably fast while
+# still letting us place markers at exact byte offsets.
+_FILL_CHUNK = 1024 * 1024
+
+
 def build_synthetic_file(out_path: Path, size_bytes: int) -> dict:
     """Write a filler-patterned file of size_bytes with embedded synthetic
-    markers at spread-out offsets, returning a manifest describing them."""
+    markers at spread-out offsets, returning a manifest describing them.
+
+    Markers are placed at exact target offsets (``size * k / 6`` for k=1..5)
+    independently of the fill-chunk size, so the layout is identical whether
+    the image is a few megabytes or several gigabytes.
+    """
     fill_pattern = b"ZEROTRACE-DEMO-FILLER-BLOCK-"
-    block = (fill_pattern * (4096 // len(fill_pattern) + 1))[:4096]
+    block = (fill_pattern * (_FILL_CHUNK // len(fill_pattern) + 1))[:_FILL_CHUNK]
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     markers_meta = []
@@ -31,30 +41,29 @@ def build_synthetic_file(out_path: Path, size_bytes: int) -> dict:
         for i in range(len(SYNTHETIC_MARKERS))
     ]
 
-    with open(out_path, "wb") as f:
-        written = 0
-        marker_idx = 0
-        while written < size_bytes:
-            remaining = size_bytes - written
-            chunk = block[: min(len(block), remaining)]
+    def _fill_to(f, written: int, target: int) -> int:
+        while written < target:
+            chunk = block[: min(len(block), target - written)]
             f.write(chunk)
             written += len(chunk)
+        return written
 
-            if marker_idx < len(SYNTHETIC_MARKERS) and written >= marker_positions[marker_idx]:
-                marker = SYNTHETIC_MARKERS[marker_idx]
-                offset = written
-                f.write(marker)
-                written += len(marker)
-                markers_meta.append(
-                    {
-                        "offset": offset,
-                        "length": len(marker),
-                        "marker_sha256": hashlib.sha256(marker).hexdigest(),
-                        "label": f"synthetic-sensitive-record-{marker_idx + 1}",
-                    }
-                )
-                marker_idx += 1
-
+    with open(out_path, "wb") as f:
+        written = 0
+        for marker_idx, marker in enumerate(SYNTHETIC_MARKERS):
+            written = _fill_to(f, written, marker_positions[marker_idx])
+            offset = written
+            f.write(marker)
+            written += len(marker)
+            markers_meta.append(
+                {
+                    "offset": offset,
+                    "length": len(marker),
+                    "marker_sha256": hashlib.sha256(marker).hexdigest(),
+                    "label": f"synthetic-sensitive-record-{marker_idx + 1}",
+                }
+            )
+        written = _fill_to(f, written, size_bytes)
         f.truncate(size_bytes)
 
     sha256 = hashlib.sha256()

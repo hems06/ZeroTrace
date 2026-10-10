@@ -55,18 +55,29 @@ def run_operation(db: Session, operation: Operation) -> Operation:
         operation.status = "failed"
         operation.verification_status = "not_run"
         operation.completed_at = datetime.utcnow()
+        operation.evidence = {**operation.evidence, "duration_seconds": operation.duration_seconds}
         operation.errors = [*operation.errors, str(exc)]
         db.commit()
-        append_event(db, "sanitization_failed", operation.id, {"error": str(exc)})
+        append_event(
+            db,
+            "sanitization_failed",
+            operation.id,
+            {"error": str(exc), "duration_seconds": operation.duration_seconds},
+        )
         return operation
 
     operation.completed_at = datetime.utcnow()
+    operation.evidence = {**operation.evidence, "duration_seconds": operation.duration_seconds}
     db.commit()
     append_event(
         db,
         "sanitization_completed",
         operation.id,
-        {"status": operation.status, "verification_status": operation.verification_status},
+        {
+            "status": operation.status,
+            "verification_status": operation.verification_status,
+            "duration_seconds": operation.duration_seconds,
+        },
     )
     return operation
 
