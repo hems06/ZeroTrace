@@ -43,12 +43,18 @@ def test_verify_detects_failed_sanitization_when_markers_survive(sample_image):
     working_copy.unlink()
 
 
-def test_verify_is_inconclusive_when_scan_exceeds_scan_cap(monkeypatch, sample_image):
-    monkeypatch.setattr(verifier_module, "MAX_FULL_SCAN_BYTES", 0)
+def test_verify_is_inconclusive_when_marker_scan_cannot_be_read(monkeypatch, sample_image):
+    # If the working copy cannot be read for marker verification, the result
+    # must be inconclusive -- never a silent "verified".
     image = image_lib.resolve_image(sample_image)
     working_copy = image_lib.make_working_copy(image, "OP-VERIFYINC")
     with open(working_copy, "r+b") as f:
         f.write(b"\x00" * working_copy.stat().st_size)
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(verifier_module, "count_markers_present", _boom)
 
     result = verify_image_operation(
         working_copy_path=working_copy,
@@ -59,7 +65,7 @@ def test_verify_is_inconclusive_when_scan_exceeds_scan_cap(monkeypatch, sample_i
         original_sha256_at_discovery=image.sha256,
     )
     assert result.status == "inconclusive"
-    assert any("too large" in w for w in result.warnings)
+    assert any("marker verification" in w.lower() for w in result.warnings)
     working_copy.unlink()
 
 

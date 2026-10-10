@@ -16,14 +16,6 @@ VERIFIED = "verified"
 FAILED = "failed"
 INCONCLUSIVE = "inconclusive"
 
-# Full-file substring scanning is only feasible at the small scale used for
-# demo/test images. Real multi-GB/TB devices would need targeted sampling
-# (per NIST SP 800-88 guidance on representative sampling) rather than a
-# full-content scan -- this cap documents that boundary honestly instead of
-# silently hanging on a large file.
-MAX_FULL_SCAN_BYTES = 256 * 1024 * 1024
-
-
 @dataclass
 class VerificationResult:
     status: str
@@ -51,28 +43,31 @@ class VerificationResult:
 
 
 def count_markers_present(path: Path, markers: list[dict]) -> int:
+    """Count how many recorded markers are still present in the file.
+
+    Only a small window around each marker's recorded offset is read (via
+    seek), never the whole file, so this works on images of any size without
+    loading gigabytes into memory -- which is what lets multi-gigabyte test
+    images be verified rather than skipped.
+    """
     size = path.stat().st_size
-    if size > MAX_FULL_SCAN_BYTES:
-        raise ValueError(
-            f"File too large for full-content marker verification ({size} bytes > "
-            f"{MAX_FULL_SCAN_BYTES} byte demo-scale cap)."
-        )
-    data = path.read_bytes()
     found = 0
-    for marker in markers:
-        marker_hash = marker["marker_sha256"]
-        # We don't have the plaintext marker bytes here by design (manifest
-        # stores only their hash); instead re-derive presence by hashing a
-        # sliding window at/around the recorded offset region.
-        offset = marker["offset"]
-        length = marker["length"]
-        window_start = max(0, offset - 64)
-        window_end = min(size, offset + length + 64)
-        window = data[window_start:window_end]
-        for i in range(0, len(window) - length + 1):
-            if hashlib.sha256(window[i : i + length]).hexdigest() == marker_hash:
-                found += 1
-                break
+    with open(path, "rb") as f:
+        for marker in markers:
+            marker_hash = marker["marker_sha256"]
+            # We don't have the plaintext marker bytes here by design (manifest
+            # stores only their hash); instead re-derive presence by hashing a
+            # sliding window at/around the recorded offset region.
+            offset = marker["offset"]
+            length = marker["length"]
+            window_start = max(0, offset - 64)
+            window_end = min(size, offset + length + 64)
+            f.seek(window_start)
+            window = f.read(window_end - window_start)
+            for i in range(0, len(window) - length + 1):
+                if hashlib.sha256(window[i : i + length]).hexdigest() == marker_hash:
+                    found += 1
+                    break
     return found
 
 
@@ -89,11 +84,8 @@ def verify_image_operation(
 
     warnings: list[str] = []
     limitations = [
-        "Marker presence is checked via hashed sliding-window comparison around "
-        "recorded offsets, not full plaintext signature scanning.",
-        "Full-content verification is only performed at demo/test scale "
-        f"(<= {MAX_FULL_SCAN_BYTES} bytes); real devices require representative "
-        "sampling rather than a full scan.",
+        "Marker presence is checked via a hashed sliding-window comparison around "
+        "each recorded offset, not a full plaintext signature scan of the whole image.",
     ]
 
     post_hash = sha256_file(working_copy_path)
@@ -101,8 +93,8 @@ def verify_image_operation(
 
     try:
         markers_after = count_markers_present(working_copy_path, markers)
-    except ValueError as exc:
-        warnings.append(str(exc))
+    except OSError as exc:
+        warnings.append(f"Could not read working copy for marker verification: {exc}")
         markers_after = -1
 
     original_untouched = sha256_file(original_image_path) == original_sha256_at_discovery
