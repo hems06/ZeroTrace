@@ -32,7 +32,7 @@ from app.sanitization.physical import (
 from app.sanitization.policy import get_method
 from app.verification.verifier import verify_image_operation
 
-REQUIRED_PHYSICAL_PHRASE = "I UNDERSTAND DATA WILL BECOME IRRECOVERABLE"
+REQUIRED_PHYSICAL_PHRASE = "I AGREE"
 
 
 class OperationError(Exception):

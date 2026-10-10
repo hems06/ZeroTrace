@@ -12,7 +12,7 @@ import type {
   VerificationMode,
 } from "../types/api";
 
-const REQUIRED_PHRASE = "I UNDERSTAND DATA WILL BECOME IRRECOVERABLE";
+const REQUIRED_PHRASE = "I AGREE";
 
 function formatBytes(n: number | null): string {
   if (n === null) return "unknown";
